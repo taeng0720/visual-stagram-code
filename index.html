@@ -2,18 +2,19 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https:">
-<title>Visual Stagram Code</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:">
+<title>Visual Studio Code</title>
 <link rel="stylesheet" href="node_modules/@vscode/codicons/dist/codicon.css">
 <style>
-/* VS Code "Dark Modern" */
 :root {
   --bg: #1f1f1f;
   --chrome: #181818;
   --border: #2b2b2b;
   --fg: #cccccc;
   --accent: #0078d4;
+  --modified: #e2c08d;
 }
+@font-face { font-family: seti; src: url('icons/seti.woff') format('woff'); }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -55,20 +56,19 @@ button.icon:hover { background: #ffffff1a; }
   border-radius: 6px;
   font-size: 12px;
 }
+.command-center:hover { background: #ffffff17; }
 .command-center .codicon { font-size: 14px; }
-/* keeps clear of the Windows/Linux window buttons; on macOS the env() fallbacks make this 8px */
 .layout-controls {
   position: absolute;
   right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px);
   display: flex;
   gap: 2px;
 }
-/* Windows/Linux (body.win): VS Code keeps its menu in the title bar and uses Consolas 14px */
 .menubar { display: none; flex: none; align-items: center; }
 .menubar img { margin: 0 6px 0 2px; }
-.menubar span { padding: 4px 8px; }
+.menubar span, .menubar button { padding: 4px 8px; border-radius: 4px; }
+.menubar button:hover, .menubar button.open { background: #ffffff1a; }
 .win .menubar { display: flex; }
-/* menu on the left, search box centred in what's left, room reserved for the buttons on the right */
 .win .titlebar {
   justify-content: flex-start;
   padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 110px) 0 8px;
@@ -135,38 +135,122 @@ main { display: flex; min-height: 0; }
   font-weight: 700;
 }
 .pane-header.collapsed { border-top: 1px solid var(--border); }
-.tree { flex: 1; min-height: 0; overflow-y: auto; }
-.tree .folder, .tree button { height: 22px; display: flex; align-items: center; gap: 6px; }
-.tree .folder { padding-left: 8px; gap: 2px; }
-.tree button { box-sizing: border-box; width: 100%; padding: 0 8px 0 32px; }
-.tree button:hover { background: #2a2d2e; }
-.tree button.active { background: #37373d; color: #fff; }
-.tree #readme { padding-left: 24px; }
-.tree button :last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.codicon-python, .codicon-markdown { flex: none; color: #519aba; }
+.pane-header .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
+.pane-header .actions { display: none; margin-left: auto; padding-right: 8px; gap: 2px; }
+.sidebar:hover .pane-header .actions { display: flex; }
+.pane-header .actions .codicon { font-size: 16px; }
+
+.tree { flex: 1; min-height: 0; overflow-y: auto; outline: none; }
+.tree .row { height: 22px; display: flex; align-items: center; gap: 6px; padding-right: 8px; white-space: nowrap; outline: none; }
+.tree .row.folder { gap: 2px; }
+.tree .row:hover { background: #2a2d2e; }
+.tree .row.active { background: #37373d; color: #fff; }
+.tree .row:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tree .row.drop, .tree.drop { background: #383b3d; }
+.tree .label { overflow: hidden; text-overflow: ellipsis; }
+.tree .row.modified .label { color: var(--modified); }
+.tree .badge { margin-left: auto; padding-left: 6px; color: var(--modified); font-size: 12px; }
+.tree .row.folder .badge { font-size: 9px; }
+input.rename {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  padding: 0 3px;
+  background: #313131;
+  outline: 1px solid var(--accent);
+  color: #fff;
+  font: inherit;
+  text-transform: none;
+  user-select: text;
+  cursor: text;
+}
+.seti {
+  flex: none;
+  width: 16px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: normal 19.5px/1 seti;
+  -webkit-font-smoothing: antialiased;
+}
 
 .editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .tabs { height: 35px; flex: none; display: flex; background: var(--chrome); border-bottom: 1px solid var(--border); }
+.tab-strip { flex: 1; min-width: 0; display: flex; overflow-x: auto; scrollbar-width: none; }
+.tab-strip::-webkit-scrollbar { display: none; }
 .tab {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
+  max-width: 220px;
   margin-bottom: -1px;
-  padding: 0 10px;
-  background: var(--bg);
-  border-top: 1px solid var(--accent);
+  padding: 0 6px 0 10px;
+  background: var(--chrome);
+  border-top: 1px solid transparent;
   border-right: 1px solid var(--border);
-  color: #fff;
+  border-bottom: 1px solid var(--border);
+  color: #9d9d9d;
+  white-space: nowrap;
 }
+.tab .tab-label { overflow: hidden; text-overflow: ellipsis; }
+.tab:hover { background: #1f1f1f; }
+.tab.active { background: var(--bg); border-top-color: var(--accent); border-bottom-color: var(--bg); color: #fff; }
+.tab-close { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; visibility: hidden; font-size: 14px; }
+.tab.active .tab-close, .tab:hover .tab-close { visibility: visible; }
+.tab-close:hover { background: #ffffff1f; }
+.quick.switcher #quick-input { display: none; }
+.quick.switcher #quick-list { margin-top: 0; }
+.binary { padding: 48px 24px; color: #9d9d9d; text-align: center; white-space: normal; }
+.binary a { color: #4daafc; cursor: pointer; }
+.watermark { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #8b8b8b; }
+.watermark .wm-row { display: flex; gap: 14px; justify-content: space-between; min-width: 300px; }
+.watermark kbd { padding: 1px 5px; border: 1px solid #3c3c3c; border-bottom-width: 2px; border-radius: 3px; background: #2b2b2b66; font: 12px -apple-system, 'Segoe UI', sans-serif; }
+.suggest {
+  position: fixed;
+  z-index: 12;
+  width: 420px;
+  max-height: 264px;
+  overflow-y: auto;
+  background: #202020;
+  border: 1px solid #454545;
+  border-radius: 3px;
+  box-shadow: 0 0 8px #0000005c;
+  font: 13px/22px Menlo, Consolas, 'Courier New', monospace;
+}
+.suggest[hidden] { display: none; }
+.suggest .item { height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 4px; white-space: nowrap; cursor: pointer; }
+.suggest .item.on { background: #04395e; color: #fff; outline: 1px solid #0078d4; outline-offset: -1px; }
+.suggest .item b { color: #2aaaff; font-weight: 400; }
+.suggest .item .detail { margin-left: auto; padding-left: 12px; overflow: hidden; text-overflow: ellipsis; color: #9d9d9d; font: 12px -apple-system, 'Segoe UI', sans-serif; }
 .tab-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; padding-right: 8px; }
 .breadcrumbs { height: 22px; flex: none; display: flex; align-items: center; gap: 2px; padding-left: 16px; color: #a9a9a9; }
 
 .stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-/* Hidden under the code view. A fixed, tall desktop-size viewport keeps Instagram
-   on its full layout and makes it render more threads and messages to read. */
+.progress { display: none; position: absolute; inset: 0 0 auto; z-index: 4; height: 2px; overflow: hidden; }
+.busy .progress { display: block; }
+.progress::before {
+  content: '';
+  position: absolute;
+  width: 2%;
+  height: 100%;
+  background: var(--accent);
+  animation: progress 4s linear infinite;
+}
+@keyframes progress {
+  from { transform: translateX(0) scaleX(1); }
+  50% { transform: translateX(2500%) scaleX(3); }
+  to { transform: translateX(4900%) scaleX(1); }
+}
+.loading .code #lines, .loading .code #after, .loading .code .line.input { visibility: hidden; }
+.ctrl .code [data-who] .str, .ctrl .code [data-who] .com { cursor: pointer; }
+.ctrl .code [data-who]:hover .str, .ctrl .code [data-who]:hover .com { text-decoration: underline; }
 webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 .raw webview { width: 100%; height: 100%; z-index: 2; }
 .code {
+  tab-size: 4;
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -190,8 +274,7 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 .line.input { box-shadow: inset 0 0 0 1px #282828; }
 .line.input::before { color: var(--fg); }
 #draft { all: unset; field-sizing: content; min-width: 1px; caret-color: #aeafad; }
-.line.input.empty .q { display: none; } /* nothing typed yet: input(), not input("") */
-/* Hover card for pictures: anchored to the hovered call, flips below when there's no room above. */
+.line.input.empty .q { display: none; }
 .media:hover { anchor-name: --media; }
 .media img {
   display: none;
@@ -209,7 +292,6 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 }
 .media:hover img { display: block; }
 .h { color: #569cd6; font-weight: bold; }
-/* messages among the filler, marked like git's changed-line bars: blue = received, green = mine */
 .line.recv { background: linear-gradient(#0078d4, #0078d4) 50px 0 / 3px 100% no-repeat; }
 .line.send { background: linear-gradient(#2ea043, #2ea043) 50px 0 / 3px 100% no-repeat; }
 .kw { color: #c586c0; }
@@ -218,14 +300,247 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 .fn { color: #dcdcaa; }
 .str { color: #ce9178; }
 .com { color: #6a9955; }
+.type { color: #4ec9b0; }
+.var { color: #9cdcfe; }
+.pre { color: #c586c0; }
+.tag { color: #569cd6; }
+.ann { color: #dcdcaa; }
 ::-webkit-scrollbar { width: 14px; height: 14px; }
 ::-webkit-scrollbar-thumb { background: rgba(121, 121, 121, 0.4); }
 ::-webkit-scrollbar-corner { background: transparent; }
+
+.quick {
+  position: fixed;
+  top: 4px;
+  left: 50%;
+  z-index: 10;
+  width: min(600px, 90vw);
+  padding: 6px;
+  transform: translateX(-50%);
+  background: #222222;
+  border: 1px solid #454545;
+  border-radius: 6px;
+  box-shadow: 0 0 8px #0000005c;
+  -webkit-app-region: no-drag;
+}
+.quick[hidden] { display: none; }
+#quick-input {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  background: #313131;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  color: var(--fg);
+  user-select: text;
+  cursor: text;
+}
+#quick-list { max-height: 400px; margin-top: 5px; overflow-y: auto; }
+#quick-list .item { height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 3px; white-space: nowrap; }
+#quick-list .item.on { background: #04395e; color: #fff; }
+#quick-list .dir { overflow: hidden; text-overflow: ellipsis; color: #9d9d9d; font-size: 12px; }
+
+.menu {
+  position: fixed;
+  z-index: 11;
+  min-width: 220px;
+  padding: 4px;
+  background: #1f1f1f;
+  border: 1px solid #454545;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px #0000005c;
+}
+.menu[hidden] { display: none; }
+.menu .item { height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 10px 0 6px; border-radius: 3px; white-space: nowrap; }
+.menu .item .codicon { width: 16px; font-size: 14px; }
+.menu .key { margin-left: auto; padding-left: 24px; }
+.menu .section { padding: 6px 10px 2px 28px; color: #9d9d9d; font-size: 11px; }
+.menu .item:hover { background: #0078d4; color: #fff; }
+.menu .item.disabled { color: #6b6b6b; }
+.menu .item.disabled:hover { background: none; color: #6b6b6b; }
+.menu .item.disabled:hover .key { color: #6b6b6b; }
+#lines.editing { outline: none; caret-color: #aeafad; }
+.toasts { position: fixed; right: 12px; bottom: 34px; z-index: 13; display: flex; flex-direction: column; gap: 8px; }
+.toast { width: 450px; padding: 10px 10px 8px; background: #202020; border: 1px solid #454545; border-radius: 4px; box-shadow: 0 0 8px #0000005c; color: var(--fg); }
+.toast-main { display: flex; gap: 8px; align-items: flex-start; line-height: 20px; }
+.toast-main .codicon { font-size: 16px; line-height: 20px; }
+.toast-main .codicon-close { margin-left: auto; padding: 0 2px; border-radius: 4px; cursor: pointer; }
+.toast-main .codicon-close:hover { background: #ffffff1a; }
+.toast-text { flex: 1; }
+.toast-foot { display: flex; align-items: center; margin-top: 8px; }
+.toast-source { color: #9d9d9d; font-size: 12px; }
+.toast-actions { margin-left: auto; display: flex; gap: 6px; }
+.toast-button { padding: 3px 10px; border-radius: 2px; background: #0078d4; color: #fff; cursor: pointer; }
+.toast-button:hover { background: #026ec1; }
+.toast-button + .toast-button { background: #313131; }
+.menu .key { color: #9d9d9d; font-size: 12px; }
+.menu .item:hover .key { color: #fff; }
+.menu hr { margin: 4px 0; border: 0; border-top: 1px solid #454545; }
+
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane-header.clickable { cursor: pointer; }
+.help-prefix { width: 16px; text-align: center; color: #4daafc; font-weight: 700; }
+.pane-header.clickable:hover { background: #ffffff0d; }
+.outline { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 4px; }
+.outline[hidden] { display: none; }
+.outline .row { padding-left: 20px; }
+.outline .row .dir { margin-left: 2px; }
+.view[hidden] { display: none; }
+.head-actions { display: flex; gap: 6px; color: var(--fg); }
+.head-actions .codicon { font-size: 16px; padding: 2px; border-radius: 4px; }
+.head-actions .codicon:hover { background: #ffffff1a; }
+.activitybar .badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: 600 9px/16px -apple-system, 'Segoe UI', sans-serif;
+  text-align: center;
+}
+.activitybar .badge[hidden] { display: none; }
+.field { position: relative; margin: 2px 12px 6px 20px; }
+.field input, .field textarea {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 6px;
+  background: #313131;
+  border: 1px solid #3c3c3c;
+  border-radius: 2px;
+  color: var(--fg);
+  font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: text;
+  cursor: text;
+  resize: none;
+}
+.field input:focus, .field textarea:focus { border-color: var(--accent); }
+.field .flags { position: absolute; right: 4px; top: 5px; display: flex; gap: 2px; color: #9d9d9d; }
+.field .flags + input, .field input:has(+ .flags) { padding-right: 66px; }
+.summary { margin: 0 12px 6px 20px; color: #9d9d9d; font-size: 12px; }
+button.primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  margin: 0 12px 8px 20px;
+  border-radius: 2px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button.primary:hover { background: #026ec1; }
+button.primary.dim { opacity: 0.5; }
+.pane-header .count { margin-left: 6px; padding: 0 6px; border-radius: 10px; background: #616161; color: #fff; font-size: 11px; font-weight: 400; }
+.pane-header .count:empty { display: none; }
+.tree .row .dir { overflow: hidden; text-overflow: ellipsis; color: #9d9d9d; font-size: 12px; }
+.tree .row .letter { margin-left: auto; padding-left: 6px; font-size: 12px; }
+.tree .row .letter.m { color: var(--modified); }
+.tree .count-chip { margin-left: auto; padding: 0 6px; border-radius: 10px; background: #616161; color: #fff; font-size: 11px; }
+.tree .hit { padding-left: 46px; font-family: Menlo, Consolas, monospace; font-size: 12px; white-space: pre; }
+.tree .hit mark { background: #623315; color: inherit; outline: 1px solid #9e6a03; }
+.welcome { padding: 4px 20px 8px; color: var(--fg); }
+.welcome button.primary { width: 100%; box-sizing: border-box; margin: 8px 0 12px; }
+.welcome p { margin: 0 0 10px; line-height: 1.5; }
+.welcome a, .page a { color: #4daafc; cursor: pointer; }
+.spacer { flex: 1; }
+.ext-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.ext { display: flex; gap: 10px; padding: 8px 12px 8px 20px; }
+.ext:hover { background: #2a2d2e; }
+.ext.active { background: #37373d; }
+.ext-icon, .page .ext-icon {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #fff;
+  font: 700 14px -apple-system, 'Segoe UI', sans-serif;
+}
+.ext-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ext-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-name { display: flex; gap: 6px; align-items: baseline; font-weight: 600; }
+.ext-name small { font-weight: 400; color: #9d9d9d; }
+.ext-desc { color: #c4c4c4; font-size: 12px; }
+.ext-pub { display: flex; justify-content: space-between; color: #9d9d9d; font-size: 12px; }
+.ext-pub .codicon { font-size: 14px; }
+
+.page { position: absolute; inset: 0; z-index: 3; overflow: auto; padding: 20px 28px; background: var(--bg); user-select: text; }
+.page[hidden] { display: none; }
+.page h1 { margin: 0 0 4px; font-size: 26px; font-weight: 400; }
+.page h3 { margin: 22px 0 8px; font-size: 13px; font-weight: 600; text-transform: uppercase; color: #9d9d9d; }
+.page .muted { color: #9d9d9d; }
+.page .setting { max-width: 720px; margin: 0 0 18px; padding: 6px 10px; border-left: 2px solid transparent; }
+.page .setting:hover { background: #2a2d2e66; border-left-color: #3c3c3c; }
+.page .setting b { display: block; margin-bottom: 4px; font-weight: 600; }
+.page .setting b span { font-weight: 400; color: #9d9d9d; }
+.page .setting p { margin: 0 0 6px; color: #c4c4c4; }
+.page select, .page input[type="text"] {
+  all: unset;
+  box-sizing: border-box;
+  min-width: 260px;
+  height: 26px;
+  padding: 0 8px;
+  background: #313131;
+  border: 1px solid #3c3c3c;
+  border-radius: 2px;
+  color: var(--fg);
+  font: 13px -apple-system, 'Segoe UI', sans-serif;
+  cursor: pointer;
+}
+.page input[type="text"] { cursor: text; user-select: text; }
+.page select option { background: #313131; }
+.page .ext-head { display: flex; gap: 18px; align-items: center; margin-bottom: 18px; }
+.page .ext-head .ext-icon { width: 96px; height: 96px; font-size: 30px; border-radius: 12px; }
+.page .ext-head .buttons { display: flex; gap: 8px; margin-top: 10px; }
+.page .ext-head button { padding: 3px 10px; border-radius: 2px; background: #313131; border: 1px solid #3c3c3c; cursor: pointer; }
+.page table { border-collapse: collapse; min-width: 640px; }
+.page td, .page th { padding: 6px 14px 6px 0; border-bottom: 1px solid #2b2b2b; text-align: left; }
+.page th { color: #9d9d9d; font-weight: 600; }
+.page kbd { padding: 1px 5px; border: 1px solid #454545; border-bottom-width: 2px; border-radius: 3px; background: #2b2b2b; font: 12px -apple-system, 'Segoe UI', sans-serif; }
+
+.panel { height: 240px; flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--chrome); }
+.panel[hidden] { display: none; }
+.panel.max { height: 70%; }
+.panel-tabs { height: 35px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px; }
+.panel-tabs > button { padding: 4px 8px; font-size: 11px; color: #9d9d9d; border-bottom: 1px solid transparent; }
+.panel-tabs > button:hover { color: var(--fg); }
+.panel-tabs > button.on { color: #e7e7e7; border-bottom-color: var(--accent); }
+.panel-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.shell-name { margin-right: 6px; font-size: 12px; color: #9d9d9d; }
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 20px 8px;
+  font: 12px/18px Menlo, Monaco, Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  user-select: text;
+  cursor: text;
+}
+.win .panel-body { font: 14px/19px Consolas, 'Courier New', monospace; }
+.panel-body .note { color: #9d9d9d; font-family: -apple-system, 'Segoe UI', sans-serif; white-space: normal; }
+.panel-body .ok { color: #23d18b; }
+.panel-body .err { color: #f14c4c; }
+.panel-body .info { color: #3b8eea; }
+.panel-body .prompt-line { display: flex; }
+.panel-body #term-input { all: unset; flex: 1; caret-color: #fff; user-select: text; }
+.statusbar #problems-status { gap: 3px; }
 
 .statusbar { display: flex; justify-content: space-between; border-top: 1px solid var(--border); font-size: 12px; white-space: nowrap; }
 .statusbar > div { display: flex; }
 .statusbar span, .statusbar button { display: flex; align-items: center; gap: 4px; margin: 0 2px; padding: 0 5px; }
 .statusbar button:hover { background: #ffffff1f; }
+.statusbar [hidden] { display: none; }
 .statusbar .remote { margin: 0 4px 0 0; padding: 0 10px; background: var(--accent); color: #fff; }
 .statusbar .codicon { font-size: 14px; }
 </style>
@@ -233,63 +548,136 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 <body>
 
 <header class="titlebar">
-  <div class="menubar" aria-hidden="true"><img src="vsstagram.svg" alt="" width="16" height="16"><span>File</span><span>Edit</span><span>Selection</span><span>View</span><span>Go</span><span>Run</span><span>Terminal</span><span>Help</span></div>
+  <div class="menubar"><img src="vsstagram.svg" alt="" width="16" height="16"><button id="menu-file">File</button><button data-menu="edit">Edit</button><button data-menu="selection">Selection</button><button data-menu="view">View</button><button data-menu="go">Go</button><button data-menu="run">Run</button><button data-menu="terminal">Terminal</button><button data-menu="help">Help</button></div>
   <button class="icon" id="back" title="Go Back" aria-label="Go Back"><i class="codicon codicon-arrow-left"></i></button>
   <button class="icon" id="forward" title="Go Forward" aria-label="Go Forward"><i class="codicon codicon-arrow-right"></i></button>
-  <div class="command-center"><i class="codicon codicon-search"></i>visual-stagram-code</div>
+  <button class="command-center" id="command-center"><i class="codicon codicon-search"></i><span id="workspace-name"></span></button>
   <div class="layout-controls">
     <button class="icon" data-toggle-sidebar title="Toggle Primary Side Bar" aria-label="Toggle Primary Side Bar"><i class="codicon codicon-layout-sidebar-left"></i></button>
-    <i class="icon codicon codicon-layout-panel-off" aria-hidden="true"></i>
+    <button class="icon" id="toggle-panel" title="Toggle Panel (Ctrl+J)" aria-label="Toggle Panel"><i class="codicon codicon-layout-panel-off"></i></button>
     <i class="icon codicon codicon-layout-sidebar-right-off" aria-hidden="true"></i>
     <i class="icon codicon codicon-layout" aria-hidden="true"></i>
   </div>
 </header>
 
+<div class="menu" id="menu" role="menu" hidden></div>
+
+<div class="quick" id="quick" hidden>
+  <input id="quick-input" placeholder="Search files by name (append : to go to a line, @ to go to a symbol, > for commands, ? for help)" spellcheck="false" autocomplete="off">
+  <div id="quick-list"></div>
+</div>
+
 <main>
   <nav class="activitybar">
     <div>
-      <button class="active" data-toggle-sidebar title="Explorer" aria-label="Explorer"><i class="codicon codicon-files"></i></button>
-      <i class="codicon codicon-search" aria-hidden="true"></i>
-      <i class="codicon codicon-source-control" aria-hidden="true"></i>
-      <i class="codicon codicon-debug-alt" aria-hidden="true"></i>
-      <i class="codicon codicon-extensions" aria-hidden="true"></i>
+      <button class="active current" data-view="explorer" title="Explorer (Ctrl+Shift+E)" aria-label="Explorer"><i class="codicon codicon-files"></i></button>
+      <button data-view="search" title="Search (Ctrl+Shift+F)" aria-label="Search"><i class="codicon codicon-search"></i></button>
+      <button data-view="scm" title="Source Control (Ctrl+Shift+G)" aria-label="Source Control"><i class="codicon codicon-source-control"></i><span class="badge" id="scm-badge" hidden></span></button>
+      <button data-view="debug" title="Run and Debug (Ctrl+Shift+D)" aria-label="Run and Debug"><i class="codicon codicon-debug-alt"></i></button>
+      <button data-view="extensions" title="Extensions (Ctrl+Shift+X)" aria-label="Extensions"><i class="codicon codicon-extensions"></i></button>
     </div>
     <div>
-      <i class="codicon codicon-account" aria-hidden="true"></i>
-      <i class="codicon codicon-settings-gear" aria-hidden="true"></i>
+      <button id="accounts" title="Accounts" aria-label="Accounts"><i class="codicon codicon-account"></i></button>
+      <button id="manage" title="Manage" aria-label="Manage"><i class="codicon codicon-settings-gear"></i></button>
     </div>
   </nav>
 
   <aside class="sidebar">
-    <h2>EXPLORER <i class="codicon codicon-ellipsis" aria-hidden="true"></i></h2>
-    <div class="pane-header"><i class="codicon codicon-chevron-down"></i>VISUAL-STAGRAM-CODE</div>
-    <div class="tree">
-      <div class="folder"><i class="codicon codicon-chevron-down"></i>direct</div>
-      <div id="threads"></div>
-      <button id="readme"><i class="codicon codicon-markdown"></i><span>README.md</span></button>
+   <div class="view" data-view="explorer">
+    <h2>EXPLORER <button class="icon" id="explorer-more" title="More Actions..." aria-label="More Actions"><i class="codicon codicon-ellipsis"></i></button></h2>
+    <div class="pane-header" id="root"><i class="codicon codicon-chevron-down"></i><span class="label" id="root-name"></span>
+      <div class="actions">
+        <button class="icon" id="new-file" title="New File..." aria-label="New File"><i class="codicon codicon-new-file"></i></button>
+        <button class="icon" id="new-folder" title="New Folder..." aria-label="New Folder"><i class="codicon codicon-new-folder"></i></button>
+        <button class="icon" id="collapse" title="Collapse Folders in Explorer" aria-label="Collapse Folders"><i class="codicon codicon-collapse-all"></i></button>
+      </div>
     </div>
-    <div class="pane-header collapsed"><i class="codicon codicon-chevron-right"></i>OUTLINE</div>
+    <div class="tree" id="tree" role="tree"></div>
+    <div class="pane-header collapsed clickable" id="outline-head" title="Followers and following: click a name to open a DM"><i class="codicon codicon-chevron-right"></i>OUTLINE<span class="count" id="outline-count"></span></div>
+    <div class="outline" id="outline" hidden>
+      <div class="field"><input id="outline-filter" placeholder="Filter symbols (ID or name)" spellcheck="false" autocomplete="off"></div>
+      <div class="tree" id="outline-list"></div>
+    </div>
     <div class="pane-header collapsed"><i class="codicon codicon-chevron-right"></i>TIMELINE</div>
+   </div>
+
+   <div class="view" data-view="search" hidden>
+    <h2>SEARCH <span class="head-actions"><i class="codicon codicon-refresh"></i><i class="codicon codicon-clear-all" id="search-clear"></i><i class="codicon codicon-collapse-all"></i></span></h2>
+    <div class="field"><input id="search-input" placeholder="Search" spellcheck="false" autocomplete="off"><span class="flags"><i class="codicon codicon-case-sensitive"></i><i class="codicon codicon-whole-word"></i><i class="codicon codicon-regex"></i></span></div>
+    <div class="summary" id="search-summary"></div>
+    <div class="tree" id="search-results"></div>
+   </div>
+
+   <div class="view" data-view="scm" hidden>
+    <h2>SOURCE CONTROL <span class="head-actions"><i class="codicon codicon-list-tree"></i><i class="codicon codicon-check" id="commit-check"></i><i class="codicon codicon-refresh"></i><i class="codicon codicon-ellipsis"></i></span></h2>
+    <div class="field"><textarea id="commit-message" rows="1" placeholder="Message (Ctrl+Enter to commit on 'main')" spellcheck="false"></textarea></div>
+    <button class="primary" id="commit"><i class="codicon codicon-check"></i>Commit</button>
+    <div class="pane-header"><i class="codicon codicon-chevron-down"></i>Changes<span class="count" id="changes-count"></span></div>
+    <div class="tree" id="changes"></div>
+   </div>
+
+   <div class="view" data-view="debug" hidden>
+    <h2>RUN AND DEBUG <span class="head-actions"><i class="codicon codicon-ellipsis"></i></span></h2>
+    <div class="welcome">
+      <button class="primary" id="run-debug">Run and Debug</button>
+      <p>To customize Run and Debug, <a id="create-launch">create a launch.json file</a>.</p>
+      <p><a id="show-configs">Show all automatic debug configurations</a>.</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="pane-header collapsed"><i class="codicon codicon-chevron-right"></i>VARIABLES</div>
+    <div class="pane-header collapsed"><i class="codicon codicon-chevron-right"></i>WATCH</div>
+    <div class="pane-header collapsed"><i class="codicon codicon-chevron-right"></i>CALL STACK</div>
+    <div class="pane-header collapsed"><i class="codicon codicon-chevron-right"></i>BREAKPOINTS</div>
+   </div>
+
+   <div class="view" data-view="extensions" hidden>
+    <h2>EXTENSIONS <span class="head-actions"><i class="codicon codicon-filter"></i><i class="codicon codicon-refresh"></i><i class="codicon codicon-clear-all"></i><i class="codicon codicon-ellipsis"></i></span></h2>
+    <div class="field"><input id="ext-search" placeholder="Search Extensions in Marketplace" spellcheck="false" autocomplete="off"></div>
+    <div class="ext-scroll">
+      <div class="pane-header"><i class="codicon codicon-chevron-down"></i>INSTALLED<span class="count" id="ext-count"></span></div>
+      <div id="ext-installed"></div>
+      <div class="pane-header"><i class="codicon codicon-chevron-down"></i>RECOMMENDED</div>
+      <div id="ext-recommended"></div>
+    </div>
+   </div>
   </aside>
 
-  <!-- "raw" = show the real Instagram page (login, prompts, anything the code view can't do) -->
   <section class="editor">
     <div class="tabs">
-      <div class="tab"><i id="tab-icon" class="codicon codicon-markdown" aria-hidden="true"></i><span class="tab-label">README.md</span><i class="codicon codicon-close" aria-hidden="true"></i></div>
+      <div class="tab-strip" id="tab-strip"></div>
       <div class="tab-actions">
-        <button class="icon" id="raw" title="Toggle Instagram Page" aria-label="Toggle Instagram Page"><i class="codicon codicon-open-preview"></i></button>
+        <button class="icon" id="raw" title="Open Preview" aria-label="Open Preview"><i class="codicon codicon-open-preview"></i></button>
         <i class="codicon codicon-split-horizontal" aria-hidden="true"></i>
         <i class="codicon codicon-ellipsis" aria-hidden="true"></i>
       </div>
     </div>
     <div class="breadcrumbs"></div>
     <div class="stage">
+      <div class="progress" aria-hidden="true"></div>
       <webview src="https://www.instagram.com/direct/inbox/" partition="persist:instagram" webpreferences="backgroundThrottling=no"></webview>
       <div class="code">
         <div id="lines"></div>
         <div class="line input send" hidden><span id="draft-pre"></span><span class="str"><span class="q">"</span><input id="draft" aria-label="Message" spellcheck="false" autocomplete="off"><span class="q">"</span></span><span id="draft-post"></span></div>
         <div id="after"></div>
       </div>
+      <div class="page" id="page" hidden></div>
+    </div>
+    <div class="panel" id="panel" hidden>
+      <div class="panel-tabs">
+        <button data-panel="problems">PROBLEMS</button>
+        <button data-panel="output">OUTPUT</button>
+        <button data-panel="debug">DEBUG CONSOLE</button>
+        <button data-panel="terminal">TERMINAL</button>
+        <button data-panel="ports">PORTS</button>
+        <div class="panel-actions">
+          <span class="shell-name" id="shell-name"></span>
+          <button class="icon" id="new-terminal" title="New Terminal"><i class="codicon codicon-add"></i></button>
+          <button class="icon" id="clear-panel" title="Clear"><i class="codicon codicon-trash"></i></button>
+          <button class="icon" id="max-panel" title="Maximize Panel Size"><i class="codicon codicon-chevron-up"></i></button>
+          <button class="icon" id="close-panel" title="Hide Panel"><i class="codicon codicon-close"></i></button>
+        </div>
+      </div>
+      <div class="panel-body" id="panel-body"></div>
     </div>
   </section>
 </main>
@@ -298,22 +686,28 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
   <div>
     <span class="remote"><i class="codicon codicon-remote"></i></span>
     <span><i class="codicon codicon-git-branch"></i>main</span>
-    <span><i class="codicon codicon-sync"></i></span>
-    <span><i class="codicon codicon-error"></i>0 <i class="codicon codicon-warning"></i>0</span>
+    <span><i class="codicon codicon-sync" id="sync-icon"></i></span>
+    <button id="problems-status"><i class="codicon codicon-error"></i>0 <i class="codicon codicon-warning"></i>0</button>
   </div>
   <div>
     <span>Ln 1, Col 1</span>
-    <button id="spaces" title="Camouflage">Spaces: 2</button>
+    <button id="spaces" title="Select Indentation">Spaces: 2</button>
     <span>UTF-8</span>
     <span>LF</span>
     <span id="lang">{} Python</span>
-    <span>3.13.5</span>
-    <span><i class="codicon codicon-bell"></i></span>
+    <span id="version">3.13.5</span>
+    <button id="bell-button" title="Notifications"><i class="codicon codicon-bell" id="bell"></i></button>
   </div>
 </footer>
 
+<script src="icons/seti.js"></script>
+<script src="langs.js"></script>
 <script src="scrape.js"></script>
 <script src="camo.js"></script>
+<script src="roman.js"></script>
+<script src="templates.js"></script>
+<script src="workspace.js"></script>
 <script src="renderer.js"></script>
+<script src="views.js"></script>
 </body>
 </html>

@@ -29,7 +29,7 @@
     "onView:visualStagram.threads"
   ],
   "scripts": {
-    "sync": "node -e \"const fs=require('fs');fs.copyFileSync('../camo.js','camo.js')\"",
+    "sync": "node -e \"const fs=require('fs');for(const f of ['camo.js','langs.js'])fs.copyFileSync('../'+f,f)\"",
     "package": "npm run sync && npx --yes @vscode/vsce package --no-dependencies --skip-license --out ../dist/visual-stagram-code.vsix"
   },
   "contributes": {

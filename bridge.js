@@ -1,27 +1,17 @@
-// Local bridge for the VS Code extension: streams the conversation out, takes commands in.
-// It is a Unix socket in the home directory (a named pipe on Windows), not a TCP port, so only
-// this user's own programs can reach it and web pages can't.
-// Protocol: one JSON object per line.
-//   app -> client   { type: 'state', away, ok, threads, rows, pending, canSend }  on every change
-//   client -> app   { type: 'open', index } | { type: 'send', text } | { type: 'page', dir }
-//                   | { type: 'attach', files: [{ name, type, data }] } | { type: 'show' }
 const net = require('net')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const GUEST = require('./scrape')
 
-// Keep in step with bridgePath() in vscode-extension/extension.js.
 const where =
   process.env.VSC_BRIDGE ||
   (process.platform === 'win32'
     ? `\\\\.\\pipe\\visual-stagram-code-${os.userInfo().username}`
     : path.join(os.homedir(), '.visual-stagram-code.sock'))
 
-const MAX_LINE = 64 * 1024 * 1024 // an attachment arrives as one base64 line
+const MAX_LINE = 64 * 1024 * 1024
 
-// page(): the Instagram webview's webContents (or null); show(): bring the window up, e.g. to log in;
-// onClients(n): told whenever the number of connected editors changes.
 module.exports = function bridge({ page, show, onClients }) {
   const clients = new Set()
   let last = ''
@@ -35,7 +25,7 @@ module.exports = function bridge({ page, show, onClients }) {
         state = { ...state, away: false, ...(await wc.executeJavaScript(GUEST.scrape)) }
       }
     } catch {
-      return // not loaded yet or mid-navigation
+      return
     }
     const json = JSON.stringify(state)
     if (json === last) return
@@ -63,7 +53,7 @@ module.exports = function bridge({ page, show, onClients }) {
   const server = net.createServer((socket) => {
     clients.add(socket)
     onClients(clients.size)
-    last = '' // make the next tick send the current state to the newcomer
+    last = ''
     tick()
 
     let buffer = ''
@@ -77,9 +67,7 @@ module.exports = function bridge({ page, show, onClients }) {
         try {
           const message = JSON.parse(text)
           if (Object.hasOwn(commands, message.type)) Promise.resolve(commands[message.type](message)).catch(() => {})
-        } catch {
-          // not JSON: ignore the line
-        }
+        } catch {}
       }
     })
     socket.on('error', () => {})
@@ -91,7 +79,7 @@ module.exports = function bridge({ page, show, onClients }) {
   server.on('error', (err) => console.error('bridge:', err.message))
 
   const unix = process.platform !== 'win32'
-  if (unix) fs.rmSync(where, { force: true }) // left over from a crash; the single-instance lock means nobody else owns it
+  if (unix) fs.rmSync(where, { force: true })
   server.listen(where, () => unix && fs.chmodSync(where, 0o600))
   return () => {
     server.close()

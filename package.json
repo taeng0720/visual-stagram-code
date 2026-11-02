@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node allow.js && node camo.js",
+    "test": "node allow.js && node langs.js && node roman.js && node camo.js && node templates.js && node workspace.js",
     "dist": "electron-builder --mac --win -c.directories.output=\"$TMPDIR/visual-stagram-code\" && mkdir -p dist && cp \"$TMPDIR\"/visual-stagram-code/*.dmg \"$TMPDIR\"/visual-stagram-code/*.exe dist/"
   },
   "dependencies": {
@@ -29,7 +29,14 @@
       "README.md",
       "vsstagram.svg",
       "bridge.js",
-      "camo.js"
+      "camo.js",
+      "workspace.js",
+      "langs.js",
+      "templates.js",
+      "icons/**",
+      "roman.js",
+      "views.js",
+      "preload.js"
     ],
     "mac": {
       "target": "dmg",
@@ -53,6 +60,5 @@
     "nsis": {
       "artifactName": "Visual-Stagram-Code-Setup.${ext}"
     }
-  },
-  "//": "dist builds in $TMPDIR: under ~/Documents, iCloud's file-provider xattrs on the .app make codesign fail"
+  }
 }

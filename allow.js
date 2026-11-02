@@ -1,4 +1,3 @@
-// Hosts the embedded webview may navigate to (Instagram + Facebook / Meta account login).
 const allowed = (url) => {
   try {
     const { protocol, hostname } = new URL(url)

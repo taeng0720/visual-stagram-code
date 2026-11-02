@@ -1,15 +1,10 @@
-// Runs inside instagram.com (renderer.js injects it into the hidden webview).
-// Everything that knows Instagram's DOM lives in this one function.
-// ponytail: pure layout heuristics, because Instagram's class names are obfuscated and its
-// ARIA roles can't be relied on; retune here when their markup shifts.
 function scrape() {
   const CLICKABLE = 'a, [role="link"], [role="button"], [role="listitem"]'
   const box = (el) => el.getBoundingClientRect()
-  const visible = (el) => box(el).width > 2 && box(el).height > 2 // skips 1px screen-reader-only labels
+  const visible = (el) => box(el).width > 2 && box(el).height > 2
 
   const composer = document.querySelector('[role="textbox"][contenteditable="true"]')
 
-  // The message list is whatever scrolls just above the composer.
   let scroller = null
   if (composer) {
     const c = box(composer)
@@ -18,11 +13,9 @@ function scrape() {
         .elementsFromPoint(c.left + c.width / 2, c.top - 200)
         .find((el) => /auto|scroll/.test(getComputedStyle(el).overflowY) && !el.contains(composer)) ?? null
   }
-  window.__vscScroller = scroller // renderer scrolls this to page through history
+  window.__vscScroller = scroller
   const pane = scroller && box(scroller)
 
-  // One message = the smallest block we reach by unwrapping single children and vertical
-  // stacks (day groups, row lists) while still at full pane width; a bubble is narrower.
   const filled = (el) => box(el).height > 0 && (el.textContent.trim() || el.querySelector('img, video'))
   const split = (el) => {
     if (box(el).width < pane.width * 0.8) return [el]
@@ -32,8 +25,6 @@ function scrape() {
     return kids.length && stacked ? kids.flatMap(split) : [el]
   }
 
-  // A message hugging the left edge is theirs, the right edge is ours; centred or
-  // small-print lines (timestamps, "seen", sender names) are notes.
   const rows = []
   const range = document.createRange()
   for (const row of scroller ? split(scroller) : []) {
@@ -53,7 +44,6 @@ function scrape() {
       grow(range.getBoundingClientRect())
       words.push(node.data.trim())
     }
-    // photos, GIFs, stickers, video posters: anything picture-sized (avatars are smaller)
     const media = [...row.querySelectorAll('img, video')].find((m) => box(m).width > 80)
     if (media) grow(box(media))
     if (!words.length && !media) continue
@@ -61,18 +51,41 @@ function scrape() {
     const gapLeft = left - pane.left
     const gapRight = pane.right - right
     const centred = Math.abs(gapLeft - gapRight) < pane.width * 0.1
+    const avatar = [...row.querySelectorAll('a[href] img')].find((img) => box(img).width > 0 && box(img).width <= 48)
     rows.push({
       top: box(row).top,
       side: centred || (small && !media) ? 'note' : gapLeft < gapRight ? 'recv' : 'send',
       text: words.length ? words.join(' ') : null,
       media: !!media,
-      src: src.startsWith('https:') ? src : null, // blob: previews can't leave the page
+      src: src.startsWith('https:') ? src : null,
+      who: avatar?.closest('a[href]').getAttribute('href').match(/^\/([A-Za-z0-9._]+)\/?$/)?.[1] ?? null,
     })
   }
-  rows.sort((a, b) => a.top - b.top) // visual order, whatever the DOM order
-  for (const row of rows) delete row.top // it moves on every scroll; keep snapshots comparable
+  rows.sort((a, b) => a.top - b.top)
+  let who = null
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i]
+    delete row.top
+    if (row.side === 'send') who = null
+    else if (row.side === 'recv') who = row.who ?? who
+    else if (who) {
+      row.who = who
+      who = null
+      continue
+    }
+    row.who = row.side === 'recv' ? who : null
+  }
 
-  // Threads: wide clickable things holding an avatar, left of the chat pane.
+  const peer = pane
+    ? [...document.querySelectorAll('a[href]')]
+        .filter((a) => {
+          const r = box(a)
+          return r.width > 0 && r.bottom <= pane.top + 1 && r.left >= pane.left - 1 && r.right <= pane.right + 1
+        })
+        .map((a) => a.getAttribute('href').match(/^\/([A-Za-z0-9._]+)\/?$/)?.[1])
+        .find(Boolean) ?? null
+    : null
+
   const edge = pane ? pane.left : 520
   const items = new Set()
   for (const img of document.querySelectorAll('img')) {
@@ -80,37 +93,61 @@ function scrape() {
     while ((item = item.parentElement?.closest(CLICKABLE)) && box(item).width < 200);
     if (item && box(item).right <= edge + 1) items.add(item)
   }
-  window.__vscThreads = [...items] // renderer clicks these by index
+  window.__vscThreads = [...items]
+  const texts = [...items].map((el) => el.innerText.trim().split('\n'))
 
-  // Attachments waiting in the composer: thumbnails in the box that owns the upload input.
   let tray = composer
   while (tray && !tray.querySelector('input[type="file"]')) tray = tray.parentElement
   if (scroller && tray?.contains(scroller)) tray = null
   const pending = [...(tray?.querySelectorAll('img, video') ?? [])].filter((m) => box(m).width >= 40).length
 
   return {
-    // a dialog (notifications prompt, etc.) needs the real page, so report not-ok
     ok: !document.querySelector('[role="dialog"]') && (items.size > 0 || !!composer),
-    threads: [...items].map((el) => el.innerText.trim().split('\n')[0]),
+    threads: texts.map((t) => t[0]),
+    previews: texts.map((t) => t.slice(1)),
+    current: [...items].findIndex((el) => getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)'),
+    peer,
     rows,
     pending,
     canSend: !!composer,
   }
 }
 
-// Page-side actions as source text. Shared by the app window (renderer.js) and the VS Code
-// bridge (bridge.js), so this file stays the only place that describes Instagram's DOM.
 const GUEST = (() => {
   const COMPOSER = '[role="textbox"][contenteditable="true"]'
   const UPLOAD = `(() => { let el = document.querySelector('${COMPOSER}'); while (el && !el.querySelector('input[type="file"]')) el = el.parentElement; return el?.querySelector('input[type="file"]') })()`
   return {
     scrape: `(${scrape})()`,
     focus: `(() => { const box = document.querySelector('${COMPOSER}'); box?.focus(); return !!box })()`,
-    pick: `${UPLOAD}?.click()`, // Instagram's own file picker
+    pick: `${UPLOAD}?.click()`,
     open: (index) => `window.__vscThreads[${Number(index)}]?.click()`,
     page: (dir) => `window.__vscScroller?.scrollBy(0, ${dir < 0 ? -1 : 1} * innerHeight)`,
-    // files: [{ name, type, data (base64) }], handed to Instagram's upload input as if picked there
-    // ponytail: whole file goes over as base64; fine for photos, stream it if large videos matter
+    message: `(() => {
+      const button = [...document.querySelectorAll('[role="button"], button')].find((el) => /^(Message|메시지 보내기)$/.test(el.textContent.trim()))
+      button?.click()
+      return !!button
+    })()`,
+    people: `(async () => {
+      const me = document.cookie.match(/ds_user_id=(\\d+)/)?.[1]
+      if (!me) return []
+      const seen = new Map()
+      for (const list of ['following', 'followers']) {
+        let next = ''
+        for (let page = 0; page < 20; page++) {
+          const res = await fetch('/api/v1/friendships/' + me + '/' + list + '/?count=100' + (next ? '&max_id=' + next : ''), { headers: { 'X-IG-App-ID': '936619743392459' }, credentials: 'include' })
+          if (!res.ok) break
+          const body = await res.json()
+          for (const u of body.users ?? []) {
+            const known = seen.get(u.username)
+            if (known) known[list] = true
+            else seen.set(u.username, { username: u.username, name: u.full_name || '', [list]: true })
+          }
+          next = body.next_max_id
+          if (!next) break
+        }
+      }
+      return [...seen.values()]
+    })()`,
     attach: (files) => `(() => {
       const upload = ${UPLOAD}
       if (!upload) return false
