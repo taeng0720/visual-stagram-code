@@ -138,7 +138,8 @@ Python(FastAPI, Django), Node.js, Spring Boot, Go, ASP.NET Core, React, Next.js,
 
 ## 개발
 
+- `src/` 앱 코드, `build/` 설치 파일 아이콘·설정, `docs/` 소개 페이지, `vscode-extension/` VS Code 확장
 - `npm install` 후 `npm start` : 실행
-- `npm test` : 자체 점검 (`allow.js`, `langs.js`, `roman.js`, `match.js`, `camo.js`, `templates.js`, `workspace.js`)
+- `npm test` : 자체 점검
 - `npm run dist` : 설치 파일 만들기 (`dist/` 에 macOS `.dmg`, Windows `.exe`). Windows 에서는 `npm run dist:win`
 - `cd vscode-extension && npm run package` : VS Code 확장 만들기 (`dist/visual-stagram-code.vsix`)

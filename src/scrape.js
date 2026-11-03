@@ -64,7 +64,6 @@ function scrape() {
     })
   }
   rows.sort((a, b) => a.top - b.top)
-  // Remember which element each row came from, so a code line can act on the real message (reply, etc.).
   window.__vscRowEls = rows.map((r) => ({ el: r.el, dx: r.dx }))
   for (const r of rows) {
     delete r.el
@@ -147,8 +146,7 @@ function scrape() {
   }
 }
 
-// Instagram only keeps ~10-30 inbox rows in the DOM and recycles them while scrolling (no per-thread links),
-// so reaching an old chat means scrolling the list until its row is rendered.
+// The inbox list is virtualized: scroll until the row is rendered.
 function inboxTools() {
   const box = (el) => el.getBoundingClientRect()
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -169,8 +167,7 @@ function inboxTools() {
     }
     return null
   }
-  // The app's hidden webview is 2400px tall, so the inbox list fits without a scrollbar and Instagram never
-  // loads the rest. Give it a normal window height while we walk it, then put it back.
+  // Shrink the webview while walking the list so Instagram loads more rows.
   const shrink = (sc) => {
     const was = sc.style.maxHeight
     sc.style.maxHeight = '700px'
@@ -178,7 +175,7 @@ function inboxTools() {
       sc.style.maxHeight = was
     }
   }
-  // Scroll down one screen; when stuck at the bottom give Instagram a moment to load more. false = really the end.
+  // Scroll one screen. false = end of list.
   const step = async (sc) => {
     const before = sc.scrollTop
     sc.scrollTop += sc.clientHeight * 0.8
@@ -199,11 +196,8 @@ const GUEST = (() => {
   return {
     scrape: `(${scrape})()`,
     focus: `(() => { const box = document.querySelector('${COMPOSER}'); box?.focus(); return !!box })()`,
-    // Type and send entirely from inside the page without ever focusing it. Instagram's composer is a Lexical
-    // editor: setting its editor state directly needs no focus, so the keyboard and the Korean IME stay on our
-    // message line (focusing the hidden page broke Hangul composition and swallowed the next Enter, and text
-    // typed into the page while it wasn't focused was silently dropped by Lexical).
-    // Returns 'clicked' (nothing focused), 'clicked+focus' (old DOM path, had to focus the page), 'nobox' or 'fallback'.
+    // Send without focusing the page (Lexical editor state), so the IME stays on our input line.
+    // Returns 'clicked', 'clicked+focus', 'nobox' or 'fallback'.
     send: (text) => `(async () => {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
       const box = document.querySelector('${COMPOSER}')
@@ -214,14 +208,13 @@ const GUEST = (() => {
       let focused = false
       const editor = box.__lexicalEditor
       if (text && editor?.setEditorState && editor.parseEditorState) {
-        // Replaces whatever is in the composer (one paragraph per line).
         const node = (t) => ({ detail: 0, format: 0, mode: 'normal', style: '', text: t, type: 'text', version: 1 })
         const para = (line) => ({ children: line ? [node(line)] : [], direction: 'ltr', format: '', indent: 0, textFormat: 0, textStyle: '', type: 'paragraph', version: 1 })
         const state = { root: { children: text.split('\\n').map(para), direction: 'ltr', format: '', indent: 0, type: 'root', version: 1 } }
         try { editor.setEditorState(editor.parseEditorState(JSON.stringify(state))) } catch {}
       }
       if (text && !typed().includes(want)) {
-        // Not Lexical (or it refused): type it the DOM way, which needs the page focused.
+        // DOM fallback (needs focus)
         focused = true
         box.focus()
         getSelection().selectAllChildren(box)
@@ -232,8 +225,7 @@ const GUEST = (() => {
         return 'fallback'
       }
       const near = (el) => { const a = el.getBoundingClientRect(), b = box.getBoundingClientRect(); return a.width > 0 && Math.abs(a.top + a.height / 2 - (b.top + b.height / 2)) < 60 }
-      // The Send control is either a text button ("Send"/"보내기") or an icon whose label sits on an inner <svg>.
-      // It only appears once the composer has text, so give React a moment to render it.
+      // Send button (text or icon), rendered once there is text
       const label = (el) => [el.getAttribute('aria-label'), el.querySelector('svg[aria-label]')?.getAttribute('aria-label'), el.textContent].map((s) => (s || '').trim()).find(Boolean) || ''
       const find = () => [...document.querySelectorAll('[role="button"], button')].find((el) => near(el) && /^(send|보내기|전송)$/i.test(label(el)))
       let button = find()
@@ -244,7 +236,7 @@ const GUEST = (() => {
       if (button) {
         button.click()
       } else {
-        // No button: press Enter *inside the page* (a real key event would pull the keyboard in here).
+        // No button: synthetic Enter inside the page
         const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true }
         box.dispatchEvent(new KeyboardEvent('keydown', init))
         box.dispatchEvent(new KeyboardEvent('keypress', init))
@@ -252,11 +244,11 @@ const GUEST = (() => {
       }
       return focused ? 'clicked+focus' : 'clicked'
     })()`,
-    // Still text in the composer? (true = the click didn't send it)
+    // Text still in the composer?
     pending: `(() => !!document.querySelector('${COMPOSER}')?.innerText.trim())()`,
     pick: `${UPLOAD}?.click()`,
     open: (index) => `window.__vscThreads[${Number(index)}]?.click()`,
-    // Every chat in the inbox, top (recent) to bottom: [{ name, preview }]. complete = reached the end of the list.
+    // All inbox chats, newest first: [{ name, preview }]
     crawl: `(async () => {
       const { items, nameOf, scroller, shrink, step, sleep } = ${TOOLS}
       const sc = scroller()
@@ -306,7 +298,7 @@ const GUEST = (() => {
         setTimeout(() => (sc.scrollTop = 0), 300)
       }
     })()`,
-    // Activity feed (likes, follows, comments...): { lastChecked, stories: [{ id, text, who, at, src }] } (seconds)
+    // Activity feed: { lastChecked, stories }
     alarms: `(async () => {
       const res = await fetch('/api/v1/news/inbox/', { headers: { 'X-IG-App-ID': '936619743392459' }, credentials: 'include' })
       if (!res.ok) return null

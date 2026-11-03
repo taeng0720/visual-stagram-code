@@ -11,8 +11,7 @@ if (!app.requestSingleInstanceLock()) {
 
 const background = process.argv.includes('--background')
 
-// Must match the installer shortcut's AppUserModelID, otherwise Windows shows a second taskbar button
-// next to the pinned one and the unread badge lands on the wrong icon.
+// Must match the installer shortcut's AppUserModelID (taskbar pinning).
 if (process.platform === 'win32') app.setAppUserModelId('com.visualstagramcode.app')
 
 nativeTheme.themeSource = 'dark'
@@ -33,7 +32,6 @@ let idle
 app.on('web-contents-created', (_, wc) => {
   if (wc.getType() !== 'webview') return
   guest = wc
-  // Tell the editor when the hidden Instagram page takes the keyboard, so it can hand it back to the message line.
   wc.on('focus', () => win && !win.isDestroyed() && win.webContents.send('guest-focus'))
   wc.setWindowOpenHandler(({ url }) => {
     openExternal(url)
@@ -89,7 +87,7 @@ app.whenReady().then(() => {
     ]),
   )
   if (background) app.dock?.hide()
-  else if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'build/icon.png'))
+  else if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../build/icon.png'))
 
   win = new BrowserWindow({
     width: 1280,
@@ -132,15 +130,6 @@ app.whenReady().then(() => {
   win.on('show', () => setTimeout(applyOverlay, 50))
   win.on('restore', applyOverlay)
   win.on('focus', () => win.flashFrame(false))
-  // Send diagnostics (which way each message went, never its text) -> %APPDATA%\Visual Stagram Code\send.log
-  const sendLog = path.join(app.getPath('userData'), 'send.log')
-  win.webContents.on('console-message', (...args) => {
-    const message = typeof args[0]?.message === 'string' ? args[0].message : args[2]
-    if (typeof message !== 'string' || !message.startsWith('[vsc-send]')) return
-    const owner = webContents.getFocusedWebContents()
-    const line = `${new Date().toISOString()} ${message} keyboard=${owner ? owner.getType() : 'none'} winFocused=${win.isFocused()}\n`
-    fs.promises.appendFile(sendLog, line).catch(() => {})
-  })
   win.loadFile(path.join(__dirname, 'index.html'))
   editorIcon().then((image) => {
     if (!image) return
@@ -171,13 +160,11 @@ app.whenReady().then(() => {
   if (background) idle = setTimeout(() => app.quit(), 60000)
   setupUpdates()
 })
-// Auto-update from GitHub Releases: the release only needs the installer .exe (or a .zip with it) — see updater.js.
-// New versions download in the background; the editor shows a VS Code-style "Restart to Update" toast,
-// and if you ignore it the update installs silently the next time the app quits.
+// Auto-update from GitHub Releases (see updater.js).
 function setupUpdates() {
   if (!app.isPackaged || process.platform !== 'win32') return
   const { createUpdater } = require('./updater')
-  const { updateRepo } = require('./package.json')
+  const { updateRepo } = require('../package.json')
   if (!updateRepo) return
   const updater = createUpdater({
     repo: updateRepo,

@@ -1,6 +1,4 @@
-// Shared fuzzy matcher used by every search box (quick open, commands, people, outline, extensions, @ mentions).
-// Understands: prefixes, word starts, acronyms ("vsc" -> "Visual Stagram Code", "km" -> "kim_minsu"),
-// Korean initial consonants ("ㄱㅁㅅ" -> "김민수"), romanized Korean ("minsu" -> "민수") and loose subsequences.
+// Fuzzy matcher for all search boxes: prefixes, acronyms, Korean initials, romanized Korean.
 const match = (() => {
   const R = typeof require !== 'undefined' ? require('./roman') : roman
 
@@ -8,7 +6,7 @@ const match = (() => {
   const choseong = (s) => s.replace(/[가-힣]/g, (c) => CHO[Math.floor((c.charCodeAt(0) - 0xac00) / 588)])
   const onlyJamo = (q) => /^[ㄱ-ㅎ]+$/.test(q)
 
-  // Start index of every "word" in the original text: after separators, at camelCase humps, at digit runs, at each Hangul run.
+  // Start index of every word.
   const starts = (text) => {
     const out = []
     for (let i = 0; i < text.length; i++) {
@@ -82,7 +80,7 @@ const match = (() => {
     return null
   }
 
-  // Best match of `query` against any of `texts`. A query with spaces needs every word to match somewhere.
+  // Best match of `query` against any of `texts`.
   function score(query, texts) {
     const q = String(query ?? '').trim().toLowerCase()
     const list = texts.map((t) => (t == null ? '' : String(t)))

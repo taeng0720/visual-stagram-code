@@ -88,7 +88,7 @@ const workspace = (() => {
   const LAYOUT_RULE = 2
   const DEFAULT = () => ({ ...layout('python-backend'), threads: {}, seen: {}, custom: {}, ids: {}, members: {}, alarm: null, naming: 'name', sort: 'recent', rule: NAME_RULE, layoutRule: LAYOUT_RULE })
 
-  // Instagram notifications live in one fixed chat-like file at the top of the chat folder ("00_notifications.py").
+  // Notifications file at the top of the chat folder.
   const alarmName = (ws) => {
     const t = T.get(ws.template)
     return '00_' + T.styled('notifications', t.style) + '.' + t.chat
@@ -178,8 +178,7 @@ const workspace = (() => {
       .replace(/\s+/g, ' ')
       .trim()
 
-  // flags[i] is Instagram's own unread mark for thread i (true / false), or null when it can't be read.
-  // A thread Instagram shows as read (opened here, on the phone, or before the app was restarted) is never "new".
+  // flags[i]: Instagram's unread mark (true / false / null).
   const sync = (ws, threads, previews = [], active = null, flags = null) => {
     let changed = false
     if (ws.inbox && !ws.folders.includes(ws.inbox)) {

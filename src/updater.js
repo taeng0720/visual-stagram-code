@@ -1,6 +1,4 @@
-// Self-update from GitHub Releases with a single uploaded file.
-// Upload just the installer (any *.exe) — or a *.zip containing it — to a release; no latest.yml needed.
-// The version comes from the release tag or title ("v0.3.1", "Ver-0.3.1", "0.4" ...).
+// Self-update from GitHub Releases (installer .exe or .zip; version from the tag).
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -92,7 +90,7 @@ function createUpdater({ repo, version, fetch, onState = () => {}, dir = path.jo
     }
   }
 
-  // Silent install, then the installer starts the new version (--force-run). Returns false if nothing is ready.
+  // Silent install, then relaunch.
   function install({ relaunch = true } = {}) {
     if (!ready || !fs.existsSync(ready)) return false
     const args = ['/S', '--updated', ...(relaunch ? ['--force-run'] : [])]

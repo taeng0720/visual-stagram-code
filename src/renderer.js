@@ -38,7 +38,7 @@ let dm = null
 let people = null
 let peopleLoad = null
 
-// Instagram's own unread marks are only trusted once we've actually seen one (so a layout change can't silence everything).
+// Only trust Instagram's unread marks once we've seen one.
 let trustFlags = localStorage.getItem('unreadFlags') === '1'
 const unreadFlags = () => {
   if (!Array.isArray(snap.unread) || snap.unread.length !== snap.threads.length) return null
@@ -121,7 +121,7 @@ opened = { kind: 'file', path: returning ? fallbackDecoy() : ws.readme }
 
 const quotes = () => document.querySelector('.line.input').classList.toggle('empty', !draft.value)
 draft.addEventListener('input', () => {
-  // Instagram's composer sends on Enter, so keep the draft on one logical line (it still wraps visually).
+  // Keep the draft on one line.
   if (/[\r\n]/.test(draft.value)) {
     const at = draft.selectionStart
     draft.value = draft.value.replace(/\r?\n/g, ' ')
@@ -306,7 +306,7 @@ function travel(from, to) {
 const goBack = () => (editor.classList.contains('raw') ? view.goBack() : travel(backStack, forwardStack))
 const goForward = () => (editor.classList.contains('raw') ? view.goForward() : travel(forwardStack, backStack))
 
-// Instagram only renders a window of the inbox, so a full list ("catalog") is collected by scrolling it now and then.
+// Full chat list, collected by scrolling the inbox.
 let catalog = []
 try {
   catalog = JSON.parse(localStorage.getItem('catalog') ?? '[]').filter((t) => t && typeof t.name === 'string')
@@ -315,8 +315,7 @@ let crawledAt = Number(localStorage.getItem('crawledAt') ?? 0)
 let guestBusy = null // { kind: 'crawl' | 'seek', promise, ... } while a script is scrolling Instagram's list
 const known = (name) => snap.threads.includes(name) || catalog.some((t) => t.name === name)
 
-// Chat order = Instagram's inbox order. The rows Instagram renders are only trusted as "the newest chats"
-// when its list is scrolled to the top; otherwise (e.g. right after opening an old chat) the saved full order wins.
+// Chat order follows Instagram's inbox.
 const liveOnTop = () => snap.threads.length > 0 && snap.atTop !== false
 const listed = () => {
   const active = opened.kind === 'thread' ? opened.name : null
@@ -1200,29 +1199,21 @@ async function poll() {
   }
 }
 setInterval(poll, 500)
-fetch('README.md')
+fetch('../README.md')
   .then((res) => res.text())
   .then((text) => {
     readme = text
     poll()
   })
 
-// Take the text and clear the box synchronously, then send in the background, one message at a time.
-// (Clearing after an await used to wipe whatever you had already started typing next, including a Hangul
-// syllable mid-composition, or glue it onto the previous message.)
+// Messages are sent one at a time in the background.
 let sending = Promise.resolve()
 
-// The hidden Instagram page focuses its own composer (when a chat opens, after a send, on re-renders), and a
-// <webview> that focuses itself takes the keyboard away from the editor: what you typed went into the invisible
-// box. Hand focus straight back to the message line, except during the moment we're actually sending.
-// Note: the page can still *say* the message box is focused while the keyboard really belongs to the webview
-// (that's what happens after we type into Instagram to send), so ask the main process to take it back.
+// If the hidden page grabs focus, give it back to the input line (except while sending).
 let guestFocusUntil = 0
 let lastFocus = null
 const allowGuestFocus = (ms) => (guestFocusUntil = Date.now() + ms)
 document.addEventListener('focusin', (e) => e.target !== view && (lastFocus = e.target))
-// force = we know the keyboard went into the page (old send path). Otherwise only act when the editor itself
-// shows focus elsewhere, so we never yank focus around while you're typing (that breaks Hangul composition).
 function keepTyping(force = false) {
   if (Date.now() < guestFocusUntil || editor.classList.contains('raw') || !menu.hidden) return
   const target = lastFocus && lastFocus !== draft && document.contains(lastFocus) && lastFocus.matches('input, textarea, [contenteditable="true"]') ? lastFocus : showing.thread && quick.hidden && !editing ? draft : null
@@ -1233,9 +1224,7 @@ function keepTyping(force = false) {
 view.addEventListener('focus', () => setTimeout(keepTyping))
 window.native?.onGuestFocus?.(() => setTimeout(keepTyping))
 
-// Re-attach the input method (Windows IME/TSF) to a text box: the same thing clicking it does.
-// After the box's text is changed by code around an Enter, the Korean IME can lose track of it and swallow
-// the next keystrokes until you click or press space — this does that reset automatically.
+// Re-attach the IME to a text box, same as clicking it.
 function resetInput(el = draft) {
   if (composing) return
   const end = el.value?.length ?? 0
@@ -1250,12 +1239,7 @@ draft.addEventListener('compositionend', () => {
   if (sentPrefix !== null) setTimeout(clearSent)
 })
 
-// Typing into the hidden Instagram page focuses its composer, and that silently moves Chromium's focused frame
-// into the <webview>: our box still *looks* focused (same element, caret blinking), but the Korean IME is now
-// attached to the hidden page, so every key after Enter was swallowed until you clicked the box or pressed space.
-// (Reproduced with real keystrokes through the Windows Korean IME.) draft.focus() alone does nothing because the
-// editor thinks the box is already focused; focusing the webview first and then the box makes the editor report
-// a real frame change, which hands the keyboard and the IME back to this window, exactly like clicking it.
+// Take the keyboard back from the webview (focusing the box alone is a no-op).
 function reclaimKeyboard() {
   if (editor.classList.contains('raw') || !menu.hidden) return
   const active = document.activeElement
@@ -1267,8 +1251,8 @@ function reclaimKeyboard() {
   if (range) target.setSelectionRange(...range)
 }
 
-// How many of my own bubbles in the open chat contain this text (-1 = can't tell).
-const normText = (s) => (s || '').replace(/s+/g, ' ').trim()
+// Number of my bubbles in the open chat containing this text (-1 = unknown).
+const normText = (s) => (s || '').replace(/\s+/g, ' ').trim()
 async function mineCount(key) {
   if (!key) return -1
   const data = await view.executeJavaScript(GUEST.scrape).catch(() => null)
@@ -1276,9 +1260,6 @@ async function mineCount(key) {
 }
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// One attempt: put the text straight into Instagram's editor and click Send, without focusing the hidden page
-// (see GUEST.send). Focus is never touched while you keep typing, so Hangul composition and the next Enter
-// aren't disturbed. Only if the page had to be focused (non-Lexical fallback) take the keyboard back.
 async function sendOnce(text) {
   allowGuestFocus(3000)
   let result
@@ -1306,29 +1287,23 @@ async function deliver(text) {
   const key = normText(text).slice(0, 30)
   const before = await mineCount(key)
   let result = await sendOnce(text)
-  // Don't trust "the box is empty": check that the message really shows up in the chat; if it doesn't
-  // (and the text isn't still sitting in the composer), try once more.
-  let delivered = null
+  // Retry once if it never showed up in the chat.
   if (result === 'sent' && before >= 0) {
-    delivered = false
+    let delivered = false
     for (let i = 0; i < 12 && !delivered; i++) {
       await sleepMs(200)
       delivered = (await mineCount(key)) > before
     }
-    if (!delivered) {
-      console.log(`[vsc-send] not in chat after send, retrying len=${text.length}`)
-      result = await sendOnce(text)
-    }
+    if (!delivered) result = await sendOnce(text)
   }
-  console.log(`[vsc-send] result=${result} delivered=${delivered} before=${before} len=${text.length} active=${document.activeElement?.id || document.activeElement?.tagName}`)
   if (result === 'nobox') {
-    // Instagram's composer isn't there (page still loading): give the text back instead of losing it.
+    // Composer not loaded yet: put the text back.
     draft.value = draft.value ? `${text} ${draft.value}` : text
     quotes()
     return
   }
   if (result !== 'sent') {
-    // Last resort (needs the page to hold the keyboard for a moment): 'typed' = text is in, just press Enter.
+    // Last resort: a real Enter key press.
     allowGuestFocus(3000)
     try {
       await view.executeJavaScript(GUEST.focus).catch(() => false)
@@ -1341,19 +1316,9 @@ async function deliver(text) {
   }
   code.scrollTop = code.scrollHeight
   setTimeout(poll, 150)
-  lastSentAt = Date.now()
 }
-// Diagnostics: does the next key after a send reach this window, and is it composing Hangul?
-let lastSentAt = 0
-document.addEventListener('keydown', (e) => {
-  if (!lastSentAt) return
-  console.log(`[vsc-send] next-key after=${Date.now() - lastSentAt}ms key=${e.key === 'Process' ? 'IME' : e.key.length === 1 ? 'char' : e.key} target=${e.target.id || e.target.tagName}`)
-  lastSentAt = 0
-}, true)
 
-// Enter: remember what is being sent, but don't touch the box inside the key event (the IME is still
-// finishing its own work there). Right after, remove exactly the sent text — anything you already started
-// typing stays — and re-attach the IME so the next message types normally.
+// Enter: leave the box alone inside the key event, then remove just the sent part.
 let sentPrefix = null
 function clearSent() {
   if (sentPrefix === null || composing) return
@@ -1509,7 +1474,7 @@ document.getElementById('forward').addEventListener('click', goForward)
 
 drawTree()
 
-// Belt and braces: nothing may ever scroll the editor stage itself (only .code / .page inside it scroll).
+// The editor stage itself never scrolls.
 const stage = document.querySelector('.stage')
 stage.addEventListener('scroll', () => (stage.scrollTop || stage.scrollLeft) && stage.scrollTo(0, 0))
 

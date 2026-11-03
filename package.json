@@ -3,10 +3,10 @@
   "productName": "Visual Stagram Code",
   "version": "0.3.0",
   "private": true,
-  "main": "main.js",
+  "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node allow.js && node langs.js && node roman.js && node match.js && node camo.js && node templates.js && node workspace.js && node updater.js",
+    "test": "node src/allow.js && node src/langs.js && node src/roman.js && node src/match.js && node src/camo.js && node src/templates.js && node src/workspace.js && node src/updater.js",
     "dist": "electron-builder --mac --win -c.directories.output=\"$TMPDIR/visual-stagram-code\" && mkdir -p dist && cp \"$TMPDIR\"/visual-stagram-code/*.dmg \"$TMPDIR\"/visual-stagram-code/*.exe dist/",
     "dist:win": "electron-builder --win --publish never"
   },
@@ -22,24 +22,8 @@
   "build": {
     "appId": "com.visualstagramcode.app",
     "files": [
-      "main.js",
-      "allow.js",
-      "index.html",
-      "renderer.js",
-      "scrape.js",
-      "README.md",
-      "vsstagram.svg",
-      "bridge.js",
-      "camo.js",
-      "workspace.js",
-      "langs.js",
-      "templates.js",
-      "icons/**",
-      "roman.js",
-      "match.js",
-      "views.js",
-      "preload.js",
-      "updater.js"
+      "src/**",
+      "README.md"
     ],
     "mac": {
       "target": "dmg",

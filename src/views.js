@@ -151,7 +151,7 @@ const views = (() => {
     toasts.replaceChildren(box)
     setTimeout(() => box.remove(), 10000)
   }
-  // Signatures we've already notified about, kept across restarts so a reopened app doesn't re-announce old messages.
+  // Already-notified messages, kept across restarts.
   const firstRun = localStorage.getItem('notified') === null
   let notified = {}
   try {
@@ -959,8 +959,7 @@ const views = (() => {
     if (k) openKey(k)
   }
   addEventListener('keyup', (e) => switcher && (e.key === 'Control' || e.key === 'Meta') && finishSwitcher())
-  // While the Ctrl+Tab list is open: arrows move the highlight, Enter opens it right away, Esc cancels.
-  // Capture phase so the keys never reach the message box (Enter would send) or move the text caret.
+  // Ctrl+Tab list: arrows, Enter, Esc.
   addEventListener(
     'keydown',
     (e) => {
@@ -1016,7 +1015,7 @@ const views = (() => {
       .slice(0, 12)
   }
 
-  // ---- IntelliSense for messages: words from this chat and from what you've sent, whole past messages as snippets.
+  // ---- IntelliSense for messages
   let sent = []
   try {
     sent = JSON.parse(localStorage.getItem('sentHistory') ?? '[]').filter((t) => typeof t === 'string')
@@ -1160,7 +1159,7 @@ const views = (() => {
         Tab: () => acceptSuggest(),
         Escape: () => closeSuggest(),
       }
-      // Enter normally sends; it only accepts once you've picked an item with the arrows (or for @mentions).
+      // Enter sends unless an item was picked.
       if (e.key === 'Enter' && (sug.mode === 'mention' || sug.moved)) keys.Enter = () => acceptSuggest()
       if (e.key === 'Enter' && !keys.Enter) return closeSuggest()
       if (!keys[e.key]) return
