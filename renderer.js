@@ -12,7 +12,7 @@ const quickList = document.getElementById('quick-list')
 
 document.body.classList.toggle('win', navigator.userAgentData.platform !== 'macOS')
 
-const EMPTY = { ok: false, threads: [], previews: [], rows: [], pending: 0, canSend: false }
+const EMPTY = { ok: false, threads: [], previews: [], unread: [], rows: [], pending: 0, canSend: false }
 const returning = localStorage.getItem('workspace') !== null
 let ws = workspace.parse(localStorage.getItem('workspace'))
 let snap = EMPTY
@@ -37,6 +37,18 @@ let paging = null
 let dm = null
 let people = null
 let peopleLoad = null
+
+// Instagram's own unread marks are only trusted once we've actually seen one (so a layout change can't silence everything).
+let trustFlags = localStorage.getItem('unreadFlags') === '1'
+const unreadFlags = () => {
+  if (!Array.isArray(snap.unread) || snap.unread.length !== snap.threads.length) return null
+  if (!trustFlags && snap.unread.some(Boolean)) {
+    trustFlags = true
+    localStorage.setItem('unreadFlags', '1')
+  }
+  return trustFlags ? snap.unread : null
+}
+const freshThreads = () => workspace.unread(ws, snap.threads, snap.previews, unreadFlags())
 
 const save = () => {
   localStorage.setItem('workspace', JSON.stringify(ws))
@@ -108,7 +120,15 @@ const fallbackDecoy = () =>
 opened = { kind: 'file', path: returning ? fallbackDecoy() : ws.readme }
 
 const quotes = () => document.querySelector('.line.input').classList.toggle('empty', !draft.value)
-draft.addEventListener('input', quotes)
+draft.addEventListener('input', () => {
+  // Instagram's composer sends on Enter, so keep the draft on one logical line (it still wraps visually).
+  if (/[\r\n]/.test(draft.value)) {
+    const at = draft.selectionStart
+    draft.value = draft.value.replace(/\r?\n/g, ' ')
+    draft.setSelectionRange(at, at)
+  }
+  quotes()
+})
 
 const syncIcon = document.getElementById('sync-icon')
 const setBusy = (progress, hide) => {
@@ -173,12 +193,12 @@ const backStack = []
 let forwardStack = []
 let lastOpenedKey = null
 let travelling = false
-const keyOf = (o) => (o.kind === 'thread' ? 'thread:' + o.name : o.kind === 'page' ? 'page:' + o.id : 'file:' + o.path)
+const keyOf = (o) => (o.kind === 'thread' ? 'thread:' + o.name : o.kind === 'page' ? 'page:' + o.id : o.kind === 'alarm' ? 'alarm:' : 'file:' + o.path)
 const fromKey = (k) => {
   const at = k.indexOf(':')
   const kind = k.slice(0, at)
   const value = k.slice(at + 1)
-  return kind === 'thread' ? { kind, name: value } : kind === 'page' ? { kind, id: value } : { kind: 'file', path: value }
+  return kind === 'thread' ? { kind, name: value } : kind === 'page' ? { kind, id: value } : kind === 'alarm' ? { kind } : { kind: 'file', path: value }
 }
 
 function trackOpened() {
@@ -203,6 +223,7 @@ function tabInfo(k) {
     return p ? { label: workspace.base(p), icon: fileIcon(p), title: p } : null
   }
   if (o.kind === 'file') return ws.files.includes(o.path) ? { label: workspace.base(o.path), icon: fileIcon(o.path), title: o.path } : null
+  if (o.kind === 'alarm') return ws.alarm ? { label: workspace.base(ws.alarm), icon: fileIcon(ws.alarm), title: ws.alarm } : null
   if (o.id === 'watermark') return null
   const meta = views.pageMeta(o.id)
   return { label: meta.title, icon: icon(meta.icon), title: meta.title }
@@ -213,7 +234,9 @@ let tabsKey = ''
 function drawTabs() {
   tabs = tabs.filter((k) => tabInfo(k))
   const active = keyOf(opened)
-  const key = JSON.stringify([active, tabs.map((k) => [k, tabInfo(k).title])])
+  const fresh = freshThreads()
+  const dirty = (k) => (k.startsWith('thread:') && fresh.has(k.slice(7))) || (k === 'alarm:' && alarmNew() > 0)
+  const key = JSON.stringify([active, tabs.map((k) => [k, tabInfo(k).title, dirty(k)])])
   if (key === tabsKey) return
   if (pressing && tabStrip.matches(':hover')) return setTimeout(drawTabs, 150)
   tabsKey = key
@@ -223,9 +246,9 @@ function drawTabs() {
       const close = icon('close')
       close.classList.add('tab-close')
       const el = document.createElement('div')
-      el.className = 'tab' + (k === active ? ' active' : '')
-      el.title = info.title
-      el.append(info.icon, span('tab-label', info.label), close)
+      el.className = 'tab' + (k === active ? ' active' : '') + (dirty(k) ? ' dirty' : '')
+      el.title = dirty(k) ? `${info.title} • new messages` : info.title
+      el.append(info.icon, span('tab-label', info.label), span('tab-dot', '●'), close)
       el.addEventListener('mousedown', (e) => {
         if (e.button !== 1) return
         e.preventDefault()
@@ -243,6 +266,7 @@ function openKey(k) {
   const o = fromKey(k)
   if (o.kind === 'thread') return openThread(o.name)
   if (o.kind === 'page') return views.openPage(o.id)
+  if (o.kind === 'alarm') return openAlarm()
   if (ws.files.includes(o.path)) {
     reveal(workspace.dir(o.path))
     openFile(o.path)
@@ -282,9 +306,150 @@ function travel(from, to) {
 const goBack = () => (editor.classList.contains('raw') ? view.goBack() : travel(backStack, forwardStack))
 const goForward = () => (editor.classList.contains('raw') ? view.goForward() : travel(forwardStack, backStack))
 
+// Instagram only renders a window of the inbox, so a full list ("catalog") is collected by scrolling it now and then.
+let catalog = []
+try {
+  catalog = JSON.parse(localStorage.getItem('catalog') ?? '[]').filter((t) => t && typeof t.name === 'string')
+} catch {}
+let crawledAt = Number(localStorage.getItem('crawledAt') ?? 0)
+let guestBusy = null // { kind: 'crawl' | 'seek', promise, ... } while a script is scrolling Instagram's list
+const known = (name) => snap.threads.includes(name) || catalog.some((t) => t.name === name)
+
+// Chat order = Instagram's inbox order. The rows Instagram renders are only trusted as "the newest chats"
+// when its list is scrolled to the top; otherwise (e.g. right after opening an old chat) the saved full order wins.
+const liveOnTop = () => snap.threads.length > 0 && snap.atTop !== false
 const listed = () => {
   const active = opened.kind === 'thread' ? opened.name : null
-  return active && snap.canSend && !snap.threads.includes(active) ? [...snap.threads, active] : snap.threads
+  const out = liveOnTop() ? [...snap.threads] : []
+  const has = new Set(out)
+  for (const t of catalog) if (!has.has(t.name)) out.push(t.name), has.add(t.name)
+  for (const n of snap.threads) if (!has.has(n)) out.push(n), has.add(n)
+  if (active && (snap.canSend || guestBusy) && !has.has(active)) out.push(active)
+  return out
+}
+// Keep the saved order current: a chat that just got a message jumps to the top, like on Instagram.
+function reorderCatalog() {
+  if (!liveOnTop() || guestBusy) return
+  const live = new Set(snap.threads)
+  const next = [...snap.threads.map((name, i) => ({ name, preview: snap.previews?.[i] ?? [] })), ...catalog.filter((t) => !live.has(t.name))]
+  if (next.map((t) => t.name).join('\n') === catalog.map((t) => t.name).join('\n')) return
+  catalog = next
+  localStorage.setItem('catalog', JSON.stringify(catalog))
+}
+
+async function stopCrawl() {
+  if (guestBusy?.kind !== 'crawl') return
+  await view.executeJavaScript('window.__vscStop = true').catch(() => {})
+  await guestBusy?.promise
+}
+
+async function crawl(force = false) {
+  if (guestBusy || dm || pinned || !snap.ok || !path?.startsWith('/direct')) return
+  if (!force && Date.now() - crawledAt < 15 * 60 * 1000) return
+  const job = view.executeJavaScript(GUEST.crawl).catch(() => null)
+  guestBusy = { kind: 'crawl', promise: job, snap }
+  render()
+  const result = await job
+  guestBusy = null
+  if (result?.threads?.length) {
+    const names = new Set(result.threads.map((t) => t.name))
+    catalog = result.complete ? result.threads : [...result.threads, ...catalog.filter((t) => !names.has(t.name))]
+    crawledAt = Date.now()
+    localStorage.setItem('catalog', JSON.stringify(catalog))
+    localStorage.setItem('crawledAt', crawledAt)
+    if (force) views.notify(`Indexed ${catalog.length} chat files.`, [], 'Explorer')
+  }
+  last = ''
+  setTimeout(poll, 50)
+}
+setInterval(() => crawl(), 60 * 1000)
+
+async function seekThread(name) {
+  await stopCrawl()
+  const job = view.executeJavaScript(GUEST.seek(name)).catch(() => false)
+  guestBusy = { kind: 'seek', name, promise: job }
+  render()
+  const ok = await job
+  guestBusy = null
+  openedAt = Date.now()
+  if (!ok && opened.kind === 'thread' && opened.name === name) {
+    views.notify(`Unable to open '${workspace.base(ws.threads[name] ?? name)}': the chat was not found in the inbox.`, [['Refresh Chat List', () => crawl(true)]], 'Explorer')
+  }
+  last = ''
+  setTimeout(poll, 50)
+}
+
+// ---- Instagram notifications as a chat-like file ("00_notifications.py")
+let alarms = null
+try {
+  alarms = JSON.parse(localStorage.getItem('alarms') ?? 'null')
+} catch {}
+let alarmSeen = Number(localStorage.getItem('alarmSeen') ?? 0) // seconds, newest item we have shown
+let alarmToasted = Number(localStorage.getItem('alarmToasted') ?? 0)
+let alarmBoundary = null // "last checked" line position, fixed while the file is open
+let alarmLoad = null
+const alarmChecked = () => Math.max(alarms?.lastChecked ?? 0, alarmSeen)
+const alarmNewest = () => Math.max(0, ...(alarms?.stories ?? []).map((a) => a.at))
+const alarmNew = () => (alarms?.stories ?? []).filter((a) => a.at > alarmChecked()).length
+
+function loadAlarms() {
+  let host = ''
+  try {
+    host = new URL(view.getURL()).hostname
+  } catch {}
+  if (alarmLoad || !/(^|\.)instagram\.com$/.test(host)) return alarmLoad
+  alarmLoad = view
+    .executeJavaScript(GUEST.alarms)
+    .then((result) => {
+      if (!result) return
+      alarms = result
+      localStorage.setItem('alarms', JSON.stringify(result))
+      const newest = alarmNewest()
+      const fresh = alarmNew()
+      if (!alarmToasted) alarmToasted = newest
+      else if (newest > alarmToasted && fresh && opened.kind !== 'alarm') {
+        alarmToasted = newest
+        views.notify(`${fresh} new notification${fresh > 1 ? 's' : ''} in ${workspace.base(ws.alarm)}.`, [['Open File', openAlarm]], 'Instagram')
+      }
+      localStorage.setItem('alarmToasted', alarmToasted)
+      last = ''
+      render()
+    })
+    .catch(() => {})
+    .finally(() => (alarmLoad = null))
+  return alarmLoad
+}
+setInterval(loadAlarms, 60 * 1000)
+
+function openAlarm() {
+  workspace.ensureAlarm(ws)
+  alarmBoundary = alarmChecked()
+  opened = { kind: 'alarm' }
+  reveal(workspace.dir(ws.alarm))
+  loadAlarms()
+  render()
+}
+
+const when = (sec) => new Date(sec * 1000).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+function alarmRows() {
+  const list = [...(alarms?.stories ?? [])].sort((a, b) => a.at - b.at)
+  const boundary = alarmBoundary ?? alarmChecked()
+  const fresh = list.filter((a) => a.at > boundary).length
+  const mark = { side: 'note', text: `──── last checked ${boundary ? when(boundary) : 'never'} · ${fresh ? fresh + ' new below' : 'no new notifications'} ────`, mark: true }
+  const rows = []
+  let prev = 0
+  let marked = false
+  for (const a of list) {
+    if (!marked && a.at > boundary) {
+      rows.push(mark)
+      marked = true
+    }
+    if (a.at - prev > 3600) rows.push({ side: 'note', text: when(a.at) })
+    prev = a.at
+    rows.push({ side: 'recv', text: a.text, who: a.who, media: !!a.src, src: a.src })
+  }
+  if (!marked && list.length) rows.push(mark)
+  return rows
 }
 
 function render() {
@@ -299,25 +464,39 @@ function render() {
   away = nowAway
   const raw = pinned || (!away && !snap.ok)
   const active = opened.kind === 'thread' ? opened.name : null
-  if (workspace.sync(ws, listed(), snap.previews, active)) save()
+  // Previews line up with snap.threads only; other chats just need a file name.
+  const synced = workspace.sync(ws, snap.threads, snap.previews, active, unreadFlags())
+  if (synced | workspace.sync(ws, listed().filter((n) => !snap.threads.includes(n)), [], active)) save()
+  if (snap.ok) reorderCatalog()
   if (snap.ok) {
     if (!peopleLoad) loadPeople()
     if (workspace.learn(ws, { threads: snap.threads, current: snap.current, peer: snap.peer, rows: snap.rows, people })) save()
   }
 
+  if (snap.ok && !booted) {
+    booted = true
+    setTimeout(() => {
+      loadAlarms()
+      crawl()
+    }, 3000)
+  }
+
   const paged = !raw && opened.kind === 'page' ? opened.id : null
-  const thread = !raw && active && snap.canSend ? active : null
-  const file = raw || thread || paged ? null : opened.kind === 'file' && ws.files.includes(opened.path) ? opened.path : opened.kind === 'thread' ? fallbackDecoy() : ws.readme
-  showing = { thread, file }
+  const seeking = guestBusy?.kind === 'seek' && guestBusy.name === active
+  const thread = !raw && active && (snap.canSend || seeking) ? active : null
+  const alarm = !raw && opened.kind === 'alarm' ? workspace.ensureAlarm(ws) : null
+  const file = raw || thread || paged || alarm ? null : opened.kind === 'file' && ws.files.includes(opened.path) ? opened.path : opened.kind === 'thread' ? fallbackDecoy() : ws.readme
+  showing = { thread, file, alarm }
   if (!draft.value) draftSeed = `${thread}:${snap.rows.length}`
   const switched = !!switching && switching.rows === JSON.stringify(snap.rows) && Date.now() - switching.at < 1500
   if (!switched) switching = null
-  const loading = !!thread && (switched || (!snap.rows.length && Date.now() - openedAt < 4000))
+  const loading = !!thread && (seeking || switched || (!snap.rows.length && Date.now() - openedAt < 4000))
   const older = !!thread && !!paging && snap.rows.length === paging.count && Date.now() - paging.at < 2000
   if (!older) paging = null
-  setBusy(loading || older || !path, loading)
+  setBusy(loading || older || !path || !!guestBusy, loading)
 
-  const state = JSON.stringify([snap, raw, path, opened, thread, file, loading, older, readme.length, level, draftSeed, version])
+  const alarmState = [alarms?.stories?.length ?? -1, alarmNewest(), alarmNew(), alarmBoundary, !!alarmLoad]
+  const state = JSON.stringify([snap, raw, path, opened, thread, file, alarm, alarmState, catalog.length, !!guestBusy, loading, older, readme.length, level, draftSeed, version])
   if (state === last) return
   last = state
 
@@ -335,10 +514,11 @@ function render() {
   }
 
   const route = (path ?? '').split('/').filter(Boolean)
-  const parts = raw ? [...route.slice(0, -1), (route.at(-1) || 'index') + '.py'] : (thread ? ws.threads[thread] : file).split('/')
+  const parts = raw ? [...route.slice(0, -1), (route.at(-1) || 'index') + '.py'] : (thread ? ws.threads[thread] : alarm ?? file).split('/')
   const name = parts.at(-1)
-  const type = raw ? langs.of('index.py') : thread ? langs.code(chatLang(name)) : langs.of(name)
+  const type = raw ? langs.of('index.py') : thread || alarm ? langs.code(chatLang(name)) : langs.of(name)
   document.getElementById('lang').textContent = type.label
+  currentLang = type.id
   document.getElementById('version').hidden = type.id !== 'python'
   document.title = `${name} - ${ws.root} - Visual Studio Code`
   document.querySelector('.breadcrumbs').replaceChildren(...parts.flatMap((part, i) => (i ? [icon('chevron-right'), span('', part)] : [span('', part)])))
@@ -370,6 +550,30 @@ function render() {
     editingFile = editable ? file : null
     document.getElementById('after').replaceChildren()
     input.hidden = true
+  } else if (alarm) {
+    linesEl.contentEditable = 'false'
+    linesEl.classList.remove('editing')
+    editingFile = null
+    if (alarms?.stories?.length) {
+      alarmSeen = Math.max(alarmSeen, alarmNewest())
+      localStorage.setItem('alarmSeen', alarmSeen)
+    }
+    const lines = camo(alarmRows(), level, null, type.id)
+    const bodyKey = JSON.stringify(['alarm', lines.map(camo.text), type.id])
+    if (bodyKey !== editorKey) {
+      editorKey = bodyKey
+      const empty = alarms ? 'no notifications' : 'loading notifications from Instagram...'
+      linesEl.replaceChildren(
+        ...(lines.some((l) => l.kind !== 'code') ? [] : [line(span('com', `${type.mark} ${empty}`))]),
+        ...lines.map((l) => {
+          const el = codeLine(l, type.id)
+          if (l.kind === 'note' && l.text.startsWith('──── last checked')) el.classList.add('alarm-mark')
+          return el
+        }),
+      )
+    }
+    document.getElementById('after').replaceChildren()
+    input.hidden = true
   } else {
     linesEl.contentEditable = 'false'
     linesEl.classList.remove('editing')
@@ -398,8 +602,12 @@ function render() {
     input.hidden = false
   }
 
-  const now = thread ? 'thread:' + thread : 'file:' + file
-  if (now !== shown) {
+  const now = thread ? 'thread:' + thread : alarm ? 'alarm' : 'file:' + file
+  if (now !== shown && alarm) {
+    const marker = linesEl.querySelector('.alarm-mark')
+    if (marker && marker.nextElementSibling) marker.scrollIntoView({ block: 'center' })
+    else code.scrollTop = code.scrollHeight
+  } else if (now !== shown) {
     code.scrollTop = thread ? code.scrollHeight : 0
     if (thread && quick.hidden && !editing) draft.focus()
   } else if (stick && thread) {
@@ -440,14 +648,15 @@ function drawTree() {
   treeLater = false
   document.getElementById('root-name').textContent = ws.root
   document.getElementById('workspace-name').textContent = ws.root
-  const dirty = [...workspace.unread(ws, snap.threads, snap.previews)].map((n) => ws.threads[n])
-  const currentPath = showing.thread ? ws.threads[showing.thread] : showing.file
+  const dirty = [...freshThreads()].map((n) => ws.threads[n])
+  const currentPath = showing.thread ? ws.threads[showing.thread] : showing.alarm ?? showing.file
+  const alarmFresh = alarmNew() > 0
   const entries = []
   const walk = (folder, depth) => {
     for (const entry of workspace.children(ws, folder, listed())) {
       const open = entry.folder && ws.expanded.includes(entry.path)
       const modified = entry.folder ? dirty.some((p) => p.startsWith(entry.path + '/')) : dirty.includes(entry.path)
-      entries.push({ path: entry.path, name: entry.name, folder: !!entry.folder, open, depth, modified, active: entry.path === currentPath })
+      entries.push({ path: entry.path, name: entry.name, folder: !!entry.folder, open, depth, modified: !!(modified || (entry.alarm && alarmFresh) || (entry.folder && alarmFresh && ws.alarm?.startsWith(entry.path + '/'))), active: entry.path === currentPath })
       if (open) walk(entry.path, depth + 1)
     }
   }
@@ -462,7 +671,7 @@ function drawTree() {
         row.dataset.path = entry.path
         row.draggable = true
         row.classList.toggle('active', entry.active)
-        row.classList.toggle('modified', entry.modified)
+        row.classList.toggle('modified', !!entry.modified)
         if (entry.modified) row.append(span('badge', entry.folder ? '●' : 'M'))
         return row
       }),
@@ -486,12 +695,16 @@ function reveal(p) {
 }
 
 function openThread(name) {
-  const i = snap.threads.indexOf(name)
-  if (i < 0) return
+  const i = guestBusy ? -1 : snap.threads.indexOf(name)
+  if (i < 0 && !known(name)) return
   if (name !== current) switching = { rows: JSON.stringify(snap.rows), at: Date.now() }
   current = name
   openedAt = Date.now()
   opened = { kind: 'thread', name }
+  if (i < 0) {
+    seekThread(name)
+    return render()
+  }
   view.executeJavaScript(GUEST.open(i))
   render()
   setTimeout(poll, 150)
@@ -504,6 +717,7 @@ function openFile(p) {
 }
 
 function openPath(p) {
+  if (p === ws.alarm) return openAlarm()
   const name = workspace.threadAt(ws, p)
   name !== undefined ? openThread(name) : openFile(p)
 }
@@ -580,7 +794,7 @@ function rename(p) {
   })
 }
 
-const deletable = (p) => p !== ws.readme && workspace.threadAt(ws, p) === undefined
+const deletable = (p) => p !== ws.readme && p !== ws.alarm && workspace.threadAt(ws, p) === undefined
 
 function remove(p) {
   if (!deletable(p) || !confirm(`Are you sure you want to delete '${workspace.base(p)}'?`)) return
@@ -817,37 +1031,30 @@ function closeQuick() {
 }
 
 function fileItems(q) {
-  const fuzzy = (text) => {
-    let i = 0
-    for (const c of text) if (c === q[i]) i++
-    return i === q.length
-  }
-  const rank = (entry) => {
-    const name = workspace.base(entry.path).toLowerCase()
-    if (!q || name.startsWith(q)) return 0
-    if (entry.path.toLowerCase().includes(q)) return 1
-    if (entry.thread?.toLowerCase().includes(q)) return 2
-    return fuzzy(name) ? 3 : -1
-  }
+  const fresh = freshThreads()
   const chats = [...new Set(listed())].map((thread, order) => ({ path: ws.threads[thread], thread, order }))
-  const entries = [...chats, ...ws.files.map((p) => ({ path: p, order: Infinity }))]
+  const alarm = ws.alarm ? [{ path: ws.alarm, alarm: true, order: -1 }] : []
+  const entries = [...alarm, ...chats, ...ws.files.map((p) => ({ path: p, order: Infinity }))].filter((entry) => entry.path)
   const recent = ws.sort !== 'name'
-  return entries
-    .filter((entry) => entry.path)
-    .map((entry) => ({ ...entry, rank: rank(entry) }))
-    .filter((entry) => entry.rank >= 0)
-    .sort((a, b) => a.rank - b.rank || (recent && a.order - b.order) || a.path.localeCompare(b.path))
-    .map((entry) => ({
-      icon: fileIcon(entry.path),
-      label: workspace.base(entry.path),
-      desc: workspace.dir(entry.path),
-      run() {
-        reveal(workspace.dir(entry.path))
-        selected = entry.path
-        save()
-        entry.thread !== undefined ? openThread(entry.thread) : openFile(entry.path)
-      },
-    }))
+  // Match the file name first, then the real chat name / Instagram ID, then the folder path.
+  const fields = (entry) =>
+    entry.alarm
+      ? [workspace.base(entry.path), '알람', '알림', 'notifications', 'alarm', 'activity', 'instagram', entry.path]
+      : [workspace.base(entry.path), entry.thread, entry.thread !== undefined ? ws.ids?.[entry.thread] : null, entry.path]
+  const tie = (a, b) => (recent && a.order - b.order) || a.path.localeCompare(b.path)
+  return match.filter(q, entries, fields, tie).map(({ item: entry, hits }) => ({
+    icon: fileIcon(entry.path),
+    label: workspace.base(entry.path),
+    hits,
+    desc: workspace.dir(entry.path),
+    badge: (entry.thread !== undefined && fresh.has(entry.thread)) || (entry.alarm && alarmNew() > 0) ? 'M' : '',
+    run() {
+      reveal(workspace.dir(entry.path))
+      selected = entry.path
+      save()
+      entry.alarm ? openAlarm() : entry.thread !== undefined ? openThread(entry.thread) : openFile(entry.path)
+    },
+  }))
 }
 
 people = JSON.parse(localStorage.getItem('symbols') ?? 'null')
@@ -865,12 +1072,10 @@ const loadPeople = () =>
 function peopleItems(q) {
   loadPeople()
   if (people === null) return [{ icon: icon('loading codicon-modifier-spin'), label: 'Loading symbols...' }]
-  const spelled = (p) => (p.spelled ??= roman.words(p.name).join(''))
-  const hit = (p) => !q || p.username.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || spelled(p).includes(q.replace(/[\s_]/g, ''))
-  const rank = (p) => (p.username.toLowerCase().startsWith(q) || p.name.toLowerCase().startsWith(q) ? 0 : 1) + (p.following && p.followers ? 0 : 2)
-  const found = people.filter(hit).sort((a, b) => rank(a) - rank(b))
+  const mutual = (p) => (p.following && p.followers ? 0 : 1)
+  const found = match.filter(q, people, (p) => [p.username, p.name], (a, b) => mutual(a) - mutual(b))
   if (!found.length) return [{ icon: icon('info'), label: people.length ? 'No matching symbols' : 'No symbols found' }]
-  return found.map((p) => ({ icon: icon('symbol-variable', '#75beff'), label: p.username, desc: p.name, run: () => openDm(p) }))
+  return found.map(({ item: p, hits }) => ({ icon: icon('symbol-variable', '#75beff'), label: p.username, hits, desc: p.name, run: () => openDm(p) }))
 }
 
 function drawQuick() {
@@ -884,13 +1089,17 @@ function drawQuick() {
         : value.startsWith(':')
           ? views.gotoLine(value.slice(1).trim())
           : fileItems(value.trim().toLowerCase())
-  picks = items.slice(0, 50)
+  picks = items.slice(0, 80)
+  if (!picks.length) picks = [{ icon: icon('info'), label: value.trim() ? 'No matching results' : 'No results' }]
   pick = Math.min(pick, Math.max(picks.length - 1, 0))
   quickList.replaceChildren(
     ...picks.map((item, i) => {
       const el = document.createElement('div')
       el.className = 'item' + (i === pick && item.run ? ' on' : '')
-      el.append(item.icon, span('', item.label), span('dir', item.desc ?? ''))
+      el.title = item.desc ? `${item.label}  ${item.desc}` : item.label
+      const label = span('label', '')
+      label.append(...match.runs(item.label, item.hits).map((r) => (r.on ? span('hl', r.text) : r.text)))
+      el.append(item.icon, label, span('dir', item.desc ?? ''), ...(item.badge ? [span('letter', item.badge)] : []))
       el.addEventListener('mousedown', (e) => {
         e.preventDefault()
         choose(item)
@@ -959,8 +1168,9 @@ quickInput.addEventListener('blur', () => (quick.hidden = true))
 document.getElementById('command-center').addEventListener('click', openQuick)
 
 let polling = false
+let booted = false
 async function poll() {
-  if (polling) return
+  if (polling || guestBusy?.kind === 'seek') return
   polling = true
   try {
     let where = null
@@ -975,7 +1185,13 @@ async function poll() {
         return
       }
     }
-    snap = dm && !where?.startsWith('/direct') ? { ...next, threads: snap.threads, previews: snap.previews } : next
+    const frozen = guestBusy?.kind === 'crawl' ? guestBusy.snap : null
+    snap =
+      frozen && next.ok
+        ? { ...next, threads: frozen.threads, previews: frozen.previews, unread: frozen.unread, current: frozen.current }
+        : dm && !where?.startsWith('/direct')
+          ? { ...next, threads: snap.threads, previews: snap.previews, unread: snap.unread }
+          : next
     path = where
     await stepDm(where)
     render()
@@ -991,16 +1207,176 @@ fetch('README.md')
     poll()
   })
 
-draft.addEventListener('keydown', async (e) => {
-  if (e.key !== 'Enter' || e.isComposing) return
-  if (!(await view.executeJavaScript(GUEST.focus))) return
-  const text = draft.value
-  draft.value = ''
-  quotes()
-  if (text) await view.insertText(text)
-  for (const type of ['keyDown', 'char', 'keyUp']) view.sendInputEvent({ type, keyCode: 'Enter' })
+// Take the text and clear the box synchronously, then send in the background, one message at a time.
+// (Clearing after an await used to wipe whatever you had already started typing next, including a Hangul
+// syllable mid-composition, or glue it onto the previous message.)
+let sending = Promise.resolve()
+
+// The hidden Instagram page focuses its own composer (when a chat opens, after a send, on re-renders), and a
+// <webview> that focuses itself takes the keyboard away from the editor: what you typed went into the invisible
+// box. Hand focus straight back to the message line, except during the moment we're actually sending.
+// Note: the page can still *say* the message box is focused while the keyboard really belongs to the webview
+// (that's what happens after we type into Instagram to send), so ask the main process to take it back.
+let guestFocusUntil = 0
+let lastFocus = null
+const allowGuestFocus = (ms) => (guestFocusUntil = Date.now() + ms)
+document.addEventListener('focusin', (e) => e.target !== view && (lastFocus = e.target))
+// force = we know the keyboard went into the page (old send path). Otherwise only act when the editor itself
+// shows focus elsewhere, so we never yank focus around while you're typing (that breaks Hangul composition).
+function keepTyping(force = false) {
+  if (Date.now() < guestFocusUntil || editor.classList.contains('raw') || !menu.hidden) return
+  const target = lastFocus && lastFocus !== draft && document.contains(lastFocus) && lastFocus.matches('input, textarea, [contenteditable="true"]') ? lastFocus : showing.thread && quick.hidden && !editing ? draft : null
+  if (!target || (!force && document.activeElement === target)) return
+  window.native?.refocus?.()
+  resetInput(target)
+}
+view.addEventListener('focus', () => setTimeout(keepTyping))
+window.native?.onGuestFocus?.(() => setTimeout(keepTyping))
+
+// Re-attach the input method (Windows IME/TSF) to a text box: the same thing clicking it does.
+// After the box's text is changed by code around an Enter, the Korean IME can lose track of it and swallow
+// the next keystrokes until you click or press space — this does that reset automatically.
+function resetInput(el = draft) {
+  if (composing) return
+  const end = el.value?.length ?? 0
+  el.blur()
+  el.focus({ preventScroll: true })
+  if (el.setSelectionRange) el.setSelectionRange(end, end)
+}
+let composing = false
+draft.addEventListener('compositionstart', () => (composing = true))
+draft.addEventListener('compositionend', () => {
+  composing = false
+  if (sentPrefix !== null) setTimeout(clearSent)
+})
+
+// Typing into the hidden Instagram page focuses its composer, and that silently moves Chromium's focused frame
+// into the <webview>: our box still *looks* focused (same element, caret blinking), but the Korean IME is now
+// attached to the hidden page, so every key after Enter was swallowed until you clicked the box or pressed space.
+// (Reproduced with real keystrokes through the Windows Korean IME.) draft.focus() alone does nothing because the
+// editor thinks the box is already focused; focusing the webview first and then the box makes the editor report
+// a real frame change, which hands the keyboard and the IME back to this window, exactly like clicking it.
+function reclaimKeyboard() {
+  if (editor.classList.contains('raw') || !menu.hidden) return
+  const active = document.activeElement
+  const target = active && active !== view && active !== document.body ? active : showing.thread && quick.hidden && !editing ? draft : null
+  if (!target) return
+  const range = typeof target.selectionStart === 'number' ? [target.selectionStart, target.selectionEnd] : null
+  view.focus()
+  target.focus({ preventScroll: true })
+  if (range) target.setSelectionRange(...range)
+}
+
+// How many of my own bubbles in the open chat contain this text (-1 = can't tell).
+const normText = (s) => (s || '').replace(/s+/g, ' ').trim()
+async function mineCount(key) {
+  if (!key) return -1
+  const data = await view.executeJavaScript(GUEST.scrape).catch(() => null)
+  return Array.isArray(data?.rows) ? data.rows.filter((r) => r.side === 'send' && normText(r.text).includes(key)).length : -1
+}
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// One attempt: put the text straight into Instagram's editor and click Send, without focusing the hidden page
+// (see GUEST.send). Focus is never touched while you keep typing, so Hangul composition and the next Enter
+// aren't disturbed. Only if the page had to be focused (non-Lexical fallback) take the keyboard back.
+async function sendOnce(text) {
+  allowGuestFocus(3000)
+  let result
+  try {
+    result = await view.executeJavaScript(GUEST.send(text)).catch(() => 'fallback')
+  } finally {
+    guestFocusUntil = 0
+  }
+  if (result === 'clicked+focus' || result === 'fallback') reclaimKeyboard()
+  if (result === 'clicked+focus') result = 'clicked'
+  if (result === 'clicked') {
+    result = 'typed'
+    for (let i = 0; i < 20; i++) {
+      if (!(await view.executeJavaScript(GUEST.pending).catch(() => true))) {
+        result = 'sent'
+        break
+      }
+      await sleepMs(50)
+    }
+  }
+  return result
+}
+
+async function deliver(text) {
+  const key = normText(text).slice(0, 30)
+  const before = await mineCount(key)
+  let result = await sendOnce(text)
+  // Don't trust "the box is empty": check that the message really shows up in the chat; if it doesn't
+  // (and the text isn't still sitting in the composer), try once more.
+  let delivered = null
+  if (result === 'sent' && before >= 0) {
+    delivered = false
+    for (let i = 0; i < 12 && !delivered; i++) {
+      await sleepMs(200)
+      delivered = (await mineCount(key)) > before
+    }
+    if (!delivered) {
+      console.log(`[vsc-send] not in chat after send, retrying len=${text.length}`)
+      result = await sendOnce(text)
+    }
+  }
+  console.log(`[vsc-send] result=${result} delivered=${delivered} before=${before} len=${text.length} active=${document.activeElement?.id || document.activeElement?.tagName}`)
+  if (result === 'nobox') {
+    // Instagram's composer isn't there (page still loading): give the text back instead of losing it.
+    draft.value = draft.value ? `${text} ${draft.value}` : text
+    quotes()
+    return
+  }
+  if (result !== 'sent') {
+    // Last resort (needs the page to hold the keyboard for a moment): 'typed' = text is in, just press Enter.
+    allowGuestFocus(3000)
+    try {
+      await view.executeJavaScript(GUEST.focus).catch(() => false)
+      if (result === 'fallback' && text) await view.insertText(text)
+      for (const type of ['keyDown', 'char', 'keyUp']) view.sendInputEvent({ type, keyCode: 'Enter' })
+    } finally {
+      guestFocusUntil = 0
+      reclaimKeyboard()
+    }
+  }
   code.scrollTop = code.scrollHeight
   setTimeout(poll, 150)
+  lastSentAt = Date.now()
+}
+// Diagnostics: does the next key after a send reach this window, and is it composing Hangul?
+let lastSentAt = 0
+document.addEventListener('keydown', (e) => {
+  if (!lastSentAt) return
+  console.log(`[vsc-send] next-key after=${Date.now() - lastSentAt}ms key=${e.key === 'Process' ? 'IME' : e.key.length === 1 ? 'char' : e.key} target=${e.target.id || e.target.tagName}`)
+  lastSentAt = 0
+}, true)
+
+// Enter: remember what is being sent, but don't touch the box inside the key event (the IME is still
+// finishing its own work there). Right after, remove exactly the sent text — anything you already started
+// typing stays — and re-attach the IME so the next message types normally.
+let sentPrefix = null
+function clearSent() {
+  if (sentPrefix === null || composing) return
+  const value = draft.value
+  const rest = value.startsWith(sentPrefix) ? value.slice(sentPrefix.length).replace(/^ +/, '') : value
+  sentPrefix = null
+  if (rest !== value) {
+    draft.value = rest
+    draft.dispatchEvent(new Event('input'))
+  }
+  if (document.activeElement === draft) resetInput(draft)
+}
+draft.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing) return
+  e.preventDefault()
+  const full = draft.value
+  // A second Enter before the box was cleared: only the part after the previous message is new.
+  const text = sentPrefix !== null && full.startsWith(sentPrefix) ? full.slice(sentPrefix.length).replace(/^ +/, '') : full
+  if (!text.trim() && !snap.pending) return
+  sentPrefix = full
+  setTimeout(clearSent)
+  views.remember(text)
+  sending = sending.then(() => deliver(text)).catch(() => {})
 })
 
 const dataUrl = (file) =>
@@ -1038,7 +1414,7 @@ function highlightSender(who) {
 
 code.addEventListener('contextmenu', (e) => {
   e.preventDefault()
-  const who = showing.thread ? e.target.closest('[data-who]')?.dataset.who : null
+  const who = showing.thread || showing.alarm ? e.target.closest('[data-who]')?.dataset.who : null
   const selection = getSelection().toString()
   const pasteInto = editingFile || document.activeElement === draft
   showMenu(e.clientX, e.clientY, [
@@ -1088,8 +1464,11 @@ addEventListener('keydown', (e) => {
     toggleSidebar()
   } else if (mod && key === 'o') {
     e.preventDefault()
-    if (showing.thread) view.executeJavaScript(GUEST.pick, true)
-  } else if (e.key === 'Escape' && !e.isComposing && !typing && quick.hidden && opened.kind === 'thread') {
+    if (showing.thread) {
+      allowGuestFocus(20 * 1000)
+      view.executeJavaScript(GUEST.pick, true)
+    }
+  } else if (e.key === 'Escape' && !e.isComposing && !typing && quick.hidden && (opened.kind === 'thread' || opened.kind === 'alarm')) {
     hide()
   }
 })
@@ -1129,3 +1508,104 @@ document.getElementById('back').addEventListener('click', goBack)
 document.getElementById('forward').addEventListener('click', goForward)
 
 drawTree()
+
+// Belt and braces: nothing may ever scroll the editor stage itself (only .code / .page inside it scroll).
+const stage = document.querySelector('.stage')
+stage.addEventListener('scroll', () => (stage.scrollTop || stage.scrollLeft) && stage.scrollTo(0, 0))
+
+// ---- Editor feel: hover cards on message lines, live cursor position, current-line highlight.
+let currentLang = 'python'
+const SIGNATURE = {
+  python: ['def print(*values: object, sep: str = " ", end: str = "\n") -> None', 'str'],
+  c: ['int puts(const char *s)', 'char *'],
+  cpp: ['std::ostream &operator<<(std::ostream &os, const std::string &s)', 'std::string'],
+  csharp: ['void Console.WriteLine(string? value)', 'string'],
+  java: ['void java.io.PrintStream.println(String x)', 'String'],
+  javascript: ['console.log(...data: any[]): void', 'string'],
+  typescript: ['console.log(...data: any[]): void', 'string'],
+  go: ['func fmt.Println(a ...any) (n int, err error)', 'string'],
+  rust: ['macro_rules! println', 'String'],
+  kotlin: ['fun println(message: Any?): Unit', 'String'],
+  swift: ['func print(_ items: Any..., separator: String = " ")', 'String'],
+  dart: ['void print(Object? object)', 'String'],
+  php: ['echo(string ...$expressions): void', 'string'],
+  ruby: ['Kernel#puts(*objects) → nil', 'String'],
+  lua: ['function print(...: any)', 'string'],
+}
+const hoverCard = Object.assign(document.createElement('div'), { className: 'hover-card', hidden: true })
+document.body.append(hoverCard)
+let hoverLine = null
+let hoverTimer = null
+const hideHover = () => {
+  clearTimeout(hoverTimer)
+  hoverLine = null
+  hoverCard.hidden = true
+}
+function showHover(lineEl, x, y) {
+  const [signature, type] = SIGNATURE[currentLang] ?? SIGNATURE.python
+  const text = lineEl.textContent.trim()
+  const quoted = lineEl.querySelector('.str')?.textContent ?? ''
+  const who = lineEl.dataset.who
+  const head = lineEl.classList.contains('send')
+    ? `(variable) ${text.match(/([A-Za-z_$][\w$]*)\s*(?::[^=]+)?(?::=|=)/)?.[1] ?? 'reply'}: ${type}`
+    : signature
+  const body = lineEl.classList.contains('send') ? 'Sent by you.' : who ? `From @${who}.` : 'Received message.'
+  hoverCard.replaceChildren(
+    Object.assign(document.createElement('div'), { className: 'hover-code', textContent: head }),
+    Object.assign(document.createElement('div'), { className: 'hover-body', textContent: `${body} ${Math.max(0, quoted.length - 2)} chars.` }),
+    ...(who ? [Object.assign(document.createElement('div'), { className: 'hover-foot', textContent: 'Ctrl+Click to open the DM · Shift+F12 to show references' })] : []),
+  )
+  hoverCard.hidden = false
+  const r = hoverCard.getBoundingClientRect()
+  hoverCard.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 8)) + 'px'
+  hoverCard.style.top = (y - r.height - 12 > 40 ? y - r.height - 12 : y + 18) + 'px'
+}
+code.addEventListener('mousemove', (e) => {
+  const lineEl = e.target.closest?.('#lines .line.recv, #lines .line.send, #after .line.recv, #after .line.send')
+  if (e.target.closest?.('.media')) return hideHover()
+  if (lineEl === hoverLine) return
+  hideHover()
+  if (!lineEl) return
+  hoverLine = lineEl
+  hoverTimer = setTimeout(() => showHover(lineEl, e.clientX, e.clientY), 600)
+})
+code.addEventListener('mouseleave', hideHover)
+code.addEventListener('scroll', hideHover, { passive: true })
+addEventListener('keydown', hideHover)
+
+const cursorPos = document.getElementById('cursor-pos')
+const allLines = () => [...code.querySelectorAll('#lines .line, .line.input:not([hidden]), #after .line')]
+const markCurrent = (lineEl) => {
+  code.querySelectorAll('.line.current').forEach((l) => l !== lineEl && l.classList.remove('current'))
+  lineEl?.classList.add('current')
+}
+function updateCursor() {
+  const sel = getSelection()
+  let ln = 1
+  let col = 1
+  let picked = 0
+  if (document.activeElement === draft) {
+    const input = document.querySelector('.line.input')
+    ln = allLines().indexOf(input) + 1
+    col = document.getElementById('draft-pre').textContent.length + 2 + (draft.selectionStart ?? 0)
+    picked = Math.abs((draft.selectionEnd ?? 0) - (draft.selectionStart ?? 0))
+    markCurrent(input)
+  } else if (sel.rangeCount && code.contains(sel.focusNode)) {
+    const focus = sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement
+    const lineEl = focus?.closest('.line')
+    if (lineEl) {
+      ln = allLines().indexOf(lineEl) + 1
+      const r = document.createRange()
+      r.setStart(lineEl, 0)
+      r.setEnd(sel.focusNode, sel.focusOffset)
+      col = r.toString().length + 1
+      markCurrent(lineEl)
+    }
+    picked = sel.toString().length
+  } else return
+  cursorPos.textContent = `Ln ${Math.max(ln, 1)}, Col ${col}${picked ? ` (${picked} selected)` : ''}`
+}
+document.addEventListener('selectionchange', updateCursor)
+draft.addEventListener('input', updateCursor)
+draft.addEventListener('focus', updateCursor)
+cursorPos.addEventListener('click', () => openQuick(':'))

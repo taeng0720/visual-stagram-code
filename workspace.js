@@ -86,7 +86,19 @@ const workspace = (() => {
 
   const NAME_RULE = 5
   const LAYOUT_RULE = 2
-  const DEFAULT = () => ({ ...layout('python-backend'), threads: {}, seen: {}, custom: {}, ids: {}, members: {}, naming: 'name', sort: 'recent', rule: NAME_RULE, layoutRule: LAYOUT_RULE })
+  const DEFAULT = () => ({ ...layout('python-backend'), threads: {}, seen: {}, custom: {}, ids: {}, members: {}, alarm: null, naming: 'name', sort: 'recent', rule: NAME_RULE, layoutRule: LAYOUT_RULE })
+
+  // Instagram notifications live in one fixed chat-like file at the top of the chat folder ("00_notifications.py").
+  const alarmName = (ws) => {
+    const t = T.get(ws.template)
+    return '00_' + T.styled('notifications', t.style) + '.' + t.chat
+  }
+  const ensureAlarm = (ws) => {
+    if (ws.alarm && valid(base(ws.alarm)) && isFolder(ws, dir(ws.alarm)) && !ws.files.includes(ws.alarm) && threadAt(ws, ws.alarm) === undefined) return ws.alarm
+    ws.alarm = null
+    ws.alarm = free(ws, isFolder(ws, ws.inbox) ? ws.inbox : '', alarmName(ws))
+    return ws.alarm
+  }
 
   const parse = (json) => {
     const ws = DEFAULT()
@@ -105,6 +117,7 @@ const workspace = (() => {
       ws.rule = NAME_RULE
       renameAuto(ws)
     }
+    ensureAlarm(ws)
     if (saved.layoutRule !== LAYOUT_RULE) {
       ws.layoutRule = LAYOUT_RULE
       const { folders, files } = T.files(ws.template)
@@ -116,7 +129,7 @@ const workspace = (() => {
 
   const threadAt = (ws, p) => Object.keys(ws.threads).find((n) => ws.threads[n] === p)
   const isFolder = (ws, p) => p === '' || ws.folders.includes(p)
-  const taken = (ws, p) => ws.folders.includes(p) || ws.files.includes(p) || threadAt(ws, p) !== undefined
+  const taken = (ws, p) => ws.folders.includes(p) || ws.files.includes(p) || threadAt(ws, p) !== undefined || (!!ws.alarm && ws.alarm === p)
 
   const free = (ws, folder, name) => {
     const dot = name.lastIndexOf('.')
@@ -152,6 +165,8 @@ const workspace = (() => {
     const names = Object.keys(old)
     for (const name of names.filter((n) => ws.custom[n])) ws.threads[name] = free(ws, ws.inbox, `${T.styled(T.stemOf(old[name]), t.style)}.${t.chat}`)
     for (const name of names.filter((n) => !ws.custom[n])) ws.threads[name] = fresh(ws, name)
+    ws.alarm = null
+    ensureAlarm(ws)
   }
 
   const signature = (lines = []) =>
@@ -163,7 +178,9 @@ const workspace = (() => {
       .replace(/\s+/g, ' ')
       .trim()
 
-  const sync = (ws, threads, previews = [], active = null) => {
+  // flags[i] is Instagram's own unread mark for thread i (true / false), or null when it can't be read.
+  // A thread Instagram shows as read (opened here, on the phone, or before the app was restarted) is never "new".
+  const sync = (ws, threads, previews = [], active = null, flags = null) => {
     let changed = false
     if (ws.inbox && !ws.folders.includes(ws.inbox)) {
       ws.inbox = ''
@@ -175,7 +192,9 @@ const workspace = (() => {
         changed = true
       }
       const sig = signature(previews[i])
-      if ((!(name in ws.seen) || name === active) && ws.seen[name] !== sig) {
+      if (!sig) return
+      const read = flags?.[i] === false
+      if ((!(name in ws.seen) || name === active || read) && ws.seen[name] !== sig) {
         ws.seen[name] = sig
         changed = true
       }
@@ -183,8 +202,14 @@ const workspace = (() => {
     return changed
   }
 
-  const unread = (ws, threads, previews = []) =>
-    new Set(threads.filter((name, i) => name in ws.seen && ws.seen[name] !== signature(previews[i])))
+  const unread = (ws, threads, previews = [], flags = null) =>
+    new Set(
+      threads.filter((name, i) => {
+        if (flags?.[i] === false) return false
+        const sig = signature(previews[i])
+        return !!sig && name in ws.seen && ws.seen[name] !== sig
+      }),
+    )
 
   const children = (ws, folder, threads) => {
     const inside = (p) => dir(p) === folder
@@ -192,8 +217,9 @@ const workspace = (() => {
     const folders = ws.folders.filter(inside).map((path) => ({ path, name: base(path), folder: true }))
     const files = ws.files.filter(inside).map((path) => ({ path, name: base(path) }))
     const chats = [...new Set(threads)].filter((n) => inside(ws.threads[n] ?? '\0')).map((n) => ({ path: ws.threads[n], name: base(ws.threads[n]), thread: n }))
-    if (ws.sort === 'name') return [...folders.sort(sort), ...[...files, ...chats].sort(sort)]
-    return [...folders.sort(sort), ...chats, ...files.sort(sort)]
+    const alarm = ws.alarm && inside(ws.alarm) ? [{ path: ws.alarm, name: base(ws.alarm), alarm: true }] : []
+    if (ws.sort === 'name') return [...folders.sort(sort), ...alarm, ...[...files, ...chats].sort(sort)]
+    return [...folders.sort(sort), ...alarm, ...chats, ...files.sort(sort)]
   }
 
   const relocate = (ws, from, to) => {
@@ -204,6 +230,7 @@ const workspace = (() => {
     ws.folders = ws.folders.map(r)
     ws.files = ws.files.map(r)
     for (const n in ws.threads) ws.threads[n] = r(ws.threads[n])
+    if (ws.alarm) ws.alarm = r(ws.alarm)
     ws.expanded = ws.expanded.map(r)
     ws.inbox = r(ws.inbox)
     ws.readme = r(ws.readme)
@@ -225,7 +252,7 @@ const workspace = (() => {
   }
 
   const remove = (ws, p) => {
-    if (p === ws.readme || threadAt(ws, p) !== undefined) return false
+    if (p === ws.readme || p === ws.alarm || threadAt(ws, p) !== undefined) return false
     const gone = (q) => under(q, p)
     for (const q of Object.keys(ws.edits ?? {})) if (gone(q)) delete ws.edits[q]
     if (ws.files.includes(p)) {
@@ -239,6 +266,11 @@ const workspace = (() => {
     ws.files = ws.files.filter((f) => !gone(f))
     if (readme) ws.files.push((ws.readme = free(ws, '', base(ws.readme))))
     for (const n in ws.threads) if (gone(ws.threads[n])) ws.threads[n] = free(ws, '', base(ws.threads[n]))
+    if (ws.alarm && gone(ws.alarm)) {
+      const name = base(ws.alarm)
+      ws.alarm = null
+      ws.alarm = free(ws, '', name)
+    }
     if (gone(ws.inbox)) ws.inbox = ''
     return true
   }
@@ -249,7 +281,7 @@ const workspace = (() => {
     ws.edits[p] = lines
   }
 
-  return { DEFAULT, parse, base, dir, join, ext, rebase, isFolder, threadAt, sync, unread, children, relocate, move, create, remove, content, apply, signature, renameAuto, nameStem, englishName, learn, edit }
+  return { ensureAlarm, DEFAULT, parse, base, dir, join, ext, rebase, isFolder, threadAt, sync, unread, children, relocate, move, create, remove, content, apply, signature, renameAuto, nameStem, englishName, learn, edit }
 })()
 
 if (typeof module !== 'undefined') module.exports = workspace
@@ -268,6 +300,15 @@ if (typeof require !== 'undefined' && require.main === module) {
   assert.deepStrictEqual([...workspace.unread(ws, ['민수'], [['뭐해? · 1m']])], ['민수'])
   workspace.sync(ws, ['민수'], [['뭐해? · 1m']], '민수')
   assert.strictEqual(workspace.unread(ws, ['민수'], [['뭐해? · 1m']]).size, 0)
+  assert.strictEqual(workspace.unread(ws, ['민수'], [[]]).size, 0, 'a preview that has not loaded yet is not new')
+  assert.strictEqual(workspace.unread(ws, ['민수'], [['또 왔어 · 1m']], [false]).size, 0, 'Instagram says read: not new')
+  assert.strictEqual(workspace.unread(ws, ['민수'], [['또 왔어 · 1m']], [true]).size, 1)
+  workspace.sync(ws, ['민수'], [['또 왔어 · 1m']], null, [false])
+  assert.strictEqual(workspace.unread(ws, ['민수'], [['또 왔어 · 1m']]).size, 0, 'read elsewhere: remembered after restart')
+  workspace.sync(ws, ['새친구'], [[]])
+  assert(!('새친구' in ws.seen), 'no baseline until the preview loads')
+  workspace.sync(ws, ['새친구'], [['안녕']])
+  assert.strictEqual(workspace.unread(ws, ['새친구'], [['안녕']]).size, 0)
 
   assert.strictEqual(workspace.relocate(ws, a, 'src/handlers/friend_api.py'), 'src/handlers/friend_api.py')
   assert(ws.custom['민수'])
@@ -361,11 +402,26 @@ if (typeof require !== 'undefined' && require.main === module) {
   workspace.learn(ids, { threads: ['바다촌놈'], people: [{ username: 'other', name: '바다촌놈' }] })
   assert.strictEqual(ids.threads['바다촌놈'], 'src/handlers/sea_boy_92.py', 'renamed by hand: left alone')
 
+  const al = workspace.parse(null)
+  assert.strictEqual(al.alarm, 'src/handlers/00_notifications.py', 'notifications file sits in the chat folder')
+  workspace.sync(al, ['김민수'], [['안녕']])
+  assert.strictEqual(workspace.children(al, 'src/handlers', ['김민수'])[0].name, '00_notifications.py', 'and on top of the chats')
+  assert(!workspace.remove(al, al.alarm), 'cannot be deleted')
+  assert.strictEqual(workspace.relocate(al, al.alarm, 'src/handlers/00_alerts.py'), 'src/handlers/00_alerts.py')
+  assert.strictEqual(al.alarm, 'src/handlers/00_alerts.py', 'can be renamed')
+  workspace.relocate(al, 'src/handlers', 'src/inbox')
+  assert.strictEqual(al.alarm, 'src/inbox/00_alerts.py', 'follows its folder')
+  workspace.remove(al, 'src')
+  assert.strictEqual(al.alarm, '00_alerts.py', 'survives its folder being deleted')
+  workspace.apply(al, 'unity')
+  assert.strictEqual(al.alarm, 'Assets/Scripts/Systems/00_Notifications.cs', 'template change: new language, English name')
+  assert.strictEqual(workspace.parse(JSON.stringify(al)).alarm, al.alarm, 'kept across restarts')
+
   const order = workspace.parse(null)
   workspace.sync(order, ['최수진', '김민수', 'aaa'], [])
   const listed = workspace.children(order, 'src/handlers', ['최수진', '김민수', 'aaa']).map((k) => k.name)
-  assert.deepStrictEqual(listed, ['choi_sujin.py', 'kim_minsu.py', 'aaa.py', '__init__.py', 'base.py', 'registry.py'], 'recent first, like Instagram')
+  assert.deepStrictEqual(listed, ['00_notifications.py', 'choi_sujin.py', 'kim_minsu.py', 'aaa.py', '__init__.py', 'base.py', 'registry.py'], 'recent first, like Instagram')
   order.sort = 'name'
-  assert.deepStrictEqual(workspace.children(order, 'src/handlers', ['최수진', '김민수', 'aaa']).map((k) => k.name), ['__init__.py', 'aaa.py', 'base.py', 'choi_sujin.py', 'kim_minsu.py', 'registry.py'])
+  assert.deepStrictEqual(workspace.children(order, 'src/handlers', ['최수진', '김민수', 'aaa']).map((k) => k.name), ['00_notifications.py', '__init__.py', 'aaa.py', 'base.py', 'choi_sujin.py', 'kim_minsu.py', 'registry.py'])
   console.log('ok')
 }

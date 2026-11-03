@@ -101,18 +101,30 @@ function activate(context) {
     docChanged.fire(uri)
   }
 
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('visualStagram.threads', {
+  const isUnread = (index) => state.unread?.[index] === true && state.threads[index] !== active
+  const threadView = vscode.window.createTreeView('visualStagram.threads', {
+    treeDataProvider: {
       onDidChangeTreeData: treeChanged.event,
       getChildren: () => state.threads.map((name, index) => ({ name, index })),
       getTreeItem({ name, index }) {
         const item = new vscode.TreeItem(name + '.py')
         item.resourceUri = uriFor(name)
         item.iconPath = vscode.ThemeIcon.File
+        item.tooltip = name
+        if (isUnread(index)) item.description = 'M'
         item.command = { command: 'visualStagram.open', title: 'Open', arguments: [index, name] }
         return item
       },
-    }),
+    },
+  })
+  // Unread count shows on the view and on the Explorer icon in the activity bar.
+  treeChanged.event(() => {
+    const n = state.threads.filter((_, i) => isUnread(i)).length
+    threadView.badge = n ? { value: n, tooltip: `${n} pending change${n > 1 ? 's' : ''}` } : undefined
+  })
+
+  context.subscriptions.push(
+    threadView,
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, {
       onDidChange: docChanged.event,
       provideTextDocumentContent: (uri) => docs.get(uri.toString())?.text ?? '',

@@ -1,13 +1,14 @@
 {
   "name": "visual-stagram-code",
   "productName": "Visual Stagram Code",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node allow.js && node langs.js && node roman.js && node camo.js && node templates.js && node workspace.js",
-    "dist": "electron-builder --mac --win -c.directories.output=\"$TMPDIR/visual-stagram-code\" && mkdir -p dist && cp \"$TMPDIR\"/visual-stagram-code/*.dmg \"$TMPDIR\"/visual-stagram-code/*.exe dist/"
+    "test": "node allow.js && node langs.js && node roman.js && node match.js && node camo.js && node templates.js && node workspace.js && node updater.js",
+    "dist": "electron-builder --mac --win -c.directories.output=\"$TMPDIR/visual-stagram-code\" && mkdir -p dist && cp \"$TMPDIR\"/visual-stagram-code/*.dmg \"$TMPDIR\"/visual-stagram-code/*.exe dist/",
+    "dist:win": "electron-builder --win --publish never"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.46-24"
@@ -35,8 +36,10 @@
       "templates.js",
       "icons/**",
       "roman.js",
+      "match.js",
       "views.js",
-      "preload.js"
+      "preload.js",
+      "updater.js"
     ],
     "mac": {
       "target": "dmg",
@@ -52,13 +55,17 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "dmg": {
       "artifactName": "Visual-Stagram-Code-mac-${arch}.${ext}"
     },
     "nsis": {
-      "artifactName": "Visual-Stagram-Code-Setup.${ext}"
-    }
-  }
+      "artifactName": "Visual-Stagram-Code-Setup.${ext}",
+      "include": "build/installer.nsh"
+    },
+    "icon": "build/icon.png"
+  },
+  "updateRepo": "taeng0720/visual-stagram-code"
 }

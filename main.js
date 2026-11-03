@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, nativeImage, shell } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, nativeImage, shell, webContents } = require('electron')
 const fs = require('fs')
 const path = require('path')
 const allowed = require('./allow')
@@ -10,6 +10,10 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 const background = process.argv.includes('--background')
+
+// Must match the installer shortcut's AppUserModelID, otherwise Windows shows a second taskbar button
+// next to the pinned one and the unread badge lands on the wrong icon.
+if (process.platform === 'win32') app.setAppUserModelId('com.visualstagramcode.app')
 
 nativeTheme.themeSource = 'dark'
 app.userAgentFallback = app.userAgentFallback
@@ -29,6 +33,8 @@ let idle
 app.on('web-contents-created', (_, wc) => {
   if (wc.getType() !== 'webview') return
   guest = wc
+  // Tell the editor when the hidden Instagram page takes the keyboard, so it can hand it back to the message line.
+  wc.on('focus', () => win && !win.isDestroyed() && win.webContents.send('guest-focus'))
   wc.setWindowOpenHandler(({ url }) => {
     openExternal(url)
     return { action: 'deny' }
@@ -99,15 +105,42 @@ app.whenReady().then(() => {
     webPreferences: { webviewTag: true, backgroundThrottling: false, preload: path.join(__dirname, 'preload.js') },
   })
   let badged = 0
+  let overlay = null
+  const applyOverlay = () => {
+    if (process.platform !== 'win32' || win.isDestroyed()) return
+    win.setOverlayIcon(badged && overlay ? overlay : null, badged ? `${badged} new message${badged > 1 ? 's' : ''}` : '')
+  }
+  ipcMain.on('refocus', (event) => {
+    if (event.sender !== win.webContents) return
+    // Only when this window is the active one (never pull focus away from another app).
+    const owner = webContents.getFocusedWebContents()
+    if (win.isFocused() || (owner && owner === guest)) win.webContents.focus()
+  })
   ipcMain.on('badge', (event, count, image) => {
     if (event.sender !== win.webContents) return
-    const n = Math.max(0, Number(count) || 0)
-    if (process.platform === 'win32') win.setOverlayIcon(n && image ? nativeImage.createFromDataURL(String(image)) : null, n ? `${n} pending changes` : '')
-    app.dock?.setBadge(n ? String(n) : '')
-    if (n > badged && !win.isFocused()) win.flashFrame(true)
+    const n = Math.max(0, Math.floor(Number(count)) || 0)
+    const grew = n > badged
     badged = n
+    overlay = n && typeof image === 'string' && image.startsWith('data:image/') ? nativeImage.createFromDataURL(image) : null
+    applyOverlay()
+    if (process.platform === 'linux') app.setBadgeCount(n)
+    app.dock?.setBadge(n ? String(n) : '')
+    if (grew && !win.isFocused()) win.flashFrame(true)
+    if (!n) win.flashFrame(false)
   })
+  // The taskbar button is recreated after hide/show, which drops the overlay.
+  win.on('show', () => setTimeout(applyOverlay, 50))
+  win.on('restore', applyOverlay)
   win.on('focus', () => win.flashFrame(false))
+  // Send diagnostics (which way each message went, never its text) -> %APPDATA%\Visual Stagram Code\send.log
+  const sendLog = path.join(app.getPath('userData'), 'send.log')
+  win.webContents.on('console-message', (...args) => {
+    const message = typeof args[0]?.message === 'string' ? args[0].message : args[2]
+    if (typeof message !== 'string' || !message.startsWith('[vsc-send]')) return
+    const owner = webContents.getFocusedWebContents()
+    const line = `${new Date().toISOString()} ${message} keyboard=${owner ? owner.getType() : 'none'} winFocused=${win.isFocused()}\n`
+    fs.promises.appendFile(sendLog, line).catch(() => {})
+  })
   win.loadFile(path.join(__dirname, 'index.html'))
   editorIcon().then((image) => {
     if (!image) return
@@ -136,7 +169,34 @@ app.whenReady().then(() => {
   })
   app.on('will-quit', close)
   if (background) idle = setTimeout(() => app.quit(), 60000)
+  setupUpdates()
 })
+// Auto-update from GitHub Releases: the release only needs the installer .exe (or a .zip with it) — see updater.js.
+// New versions download in the background; the editor shows a VS Code-style "Restart to Update" toast,
+// and if you ignore it the update installs silently the next time the app quits.
+function setupUpdates() {
+  if (!app.isPackaged || process.platform !== 'win32') return
+  const { createUpdater } = require('./updater')
+  const { updateRepo } = require('./package.json')
+  if (!updateRepo) return
+  const updater = createUpdater({
+    repo: updateRepo,
+    version: app.getVersion(),
+    fetch: globalThis.fetch,
+    onState: (state, info) => !win.isDestroyed() && win.webContents.send('update', state, info),
+  })
+  const mine = (event) => event.sender === win.webContents
+  ipcMain.on('update-check', (event) => mine(event) && updater.run({ manual: true }))
+  ipcMain.on('update-notes', (event) => mine(event) && updater.found?.page && openExternal(updater.found.page))
+  ipcMain.on('update-install', (event) => {
+    if (!mine(event) || !updater.install({ relaunch: true })) return
+    quitting = true
+    app.quit()
+  })
+  app.on('will-quit', () => updater.pending && updater.install({ relaunch: false }))
+  setTimeout(() => updater.run(), 10 * 1000)
+  setInterval(() => updater.run(), 2 * 60 * 60 * 1000)
+}
 
 app.on('before-quit', () => (quitting = true))
 app.on('window-all-closed', () => app.quit())

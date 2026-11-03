@@ -21,6 +21,50 @@ const camo = (() => {
     }
   }
 
+  // Comments a real codebase would have, written in each language's own comment style.
+  const REMARKS = [
+    'TODO: handle the empty case',
+    'FIXME: breaks when the list is empty',
+    'NOTE: keep in sync with the API schema',
+    'HACK: workaround until the backend fix ships',
+    'retry once before giving up',
+    'cache the result for the next call',
+    'normalize input before comparing',
+    'skip rows that were already processed',
+    'guard against null payloads',
+    'see issue #482',
+    'TODO(perf): batch these requests',
+    'validate before writing to disk',
+    'keep the old behaviour for v1 clients',
+    'called from the scheduler every minute',
+  ]
+  const DOCS = [
+    'Handles {f} events coming from the queue.',
+    'Returns the cached result of {f}, or None when missing.',
+    'Validates the payload before {f} runs.',
+    'Retries {f} up to three times with backoff.',
+    'Keep {f} idempotent: the scheduler may call it twice.',
+    'Thin wrapper around {f}, kept for backwards compatibility.',
+  ]
+  const docComment = (id, mark, text, name) => {
+    if (id === 'go') return `// ${name} ${text[0].toLowerCase()}${text.slice(1)}`
+    const styles = {
+      csharp: `/// <summary>${text}</summary>`,
+      java: `/** ${text} */`,
+      javascript: `/** ${text} */`,
+      typescript: `/** ${text} */`,
+      kotlin: `/** ${text} */`,
+      php: `/** ${text} */`,
+      cpp: `/// ${text}`,
+      c: `/* ${text} */`,
+      rust: `/// ${text}`,
+      dart: `/// ${text}`,
+      swift: `/// ${text}`,
+      lua: `--- ${text}`,
+    }
+    return styles[id] ?? `${mark} ${text}`
+  }
+
   const quote = (s) => `"${s.replace(/[\\"]/g, '\\$&').replace(/\n/g, '\\n')}"`
   const file = (src) => new URL(src).pathname.split('/').pop()
 
@@ -38,15 +82,25 @@ const camo = (() => {
       const pick = (list) => list[Math.floor(rand() * list.length)]
       const [pre, post] = forms === L.send || (odds && rand() < odds.fancy) ? pick(forms) : forms[0]
       if (!odds) return out.push({ ...line, indent: '', pre, post })
+      let named = null
       const snippet = (list) => {
         let i = Math.floor(rand() * list.length)
         if (list[i] === previous) i = (i + 1) % list.length
         previous = list[i]
-        return list[i].replaceAll('$f', pick(L.names)).split('\n')
+        named = list[i].includes('$f') ? pick(L.names) : null
+        return list[i].replaceAll('$f', named).split('\n')
+      }
+      // Functions get a doc comment in the language's style, other blocks sometimes a TODO/NOTE remark.
+      const commented = (lines) => {
+        if (rand() >= odds.fancy * 0.7) return lines
+        if (!named) return [`${L.mark} ${pick(REMARKS)}`, ...lines]
+        const text = pick(DOCS).replaceAll('{f}', named)
+        if (L.id === 'python' && /^(async )?def /.test(lines[0])) return [lines[0], `${L.indent}"""${text}"""`, ...lines.slice(1)]
+        return [docComment(L.id, L.mark, text, named), ...lines]
       }
       for (let n = 0; n < 2 && rand() < odds.block; n++) {
         blank()
-        snippet(L.blocks).forEach(code)
+        commented(snippet(L.blocks)).forEach(code)
         blank()
       }
       if (rand() < odds.wrap) {
@@ -149,5 +203,11 @@ if (typeof require !== 'undefined' && require.main === module) {
   assert(camo(rows, 2, null, 'csharp').map(camo.text).some((t) => t.includes('"뭐해?");')))
   const many = Array.from({ length: 60 }, (_, i) => ({ side: i % 2 ? 'recv' : 'send', text: 'message ' + i }))
   assert(camo(many, 8).length > camo(many, 4).length && camo(many, 4).length > camo(many, 2).length, 'higher level, more filler')
+  const docs = (lang) => camo(many, 8, null, lang).map(camo.text)
+  assert(docs('csharp').some((t) => t.startsWith('/// <summary>')), 'C# doc comments')
+  assert(docs('java').some((t) => t.startsWith('/** ')), 'Javadoc')
+  assert(docs('python').some((t) => /^\s+"""/.test(t)), 'Python docstrings sit inside the def')
+  assert(docs('lua').some((t) => t.startsWith('--- ')), 'Lua doc comments')
+  assert(!docs('python').some((t) => t.startsWith('//')), 'no C comments in Python')
   console.log('ok')
 }

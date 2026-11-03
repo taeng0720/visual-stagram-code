@@ -20,6 +20,7 @@ html, body { height: 100%; margin: 0; }
 body {
   display: grid;
   grid-template-rows: 35px 1fr 22px;
+  grid-template-columns: minmax(0, 1fr);
   background: var(--chrome);
   color: var(--fg);
   font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -78,7 +79,7 @@ button.icon:hover { background: #ffffff1a; }
 .win .code { font: 14px/19px Consolas, 'Courier New', monospace; }
 .win .line { min-height: 19px; }
 
-main { display: flex; min-height: 0; }
+main { display: flex; min-width: 0; min-height: 0; overflow: clip; }
 
 .activitybar {
   width: 48px;
@@ -141,7 +142,7 @@ main { display: flex; min-height: 0; }
 .pane-header .actions .codicon { font-size: 16px; }
 
 .tree { flex: 1; min-height: 0; overflow-y: auto; outline: none; }
-.tree .row { height: 22px; display: flex; align-items: center; gap: 6px; padding-right: 8px; white-space: nowrap; outline: none; }
+.tree .row { height: 22px; display: flex; align-items: center; gap: 6px; padding-right: 8px; white-space: nowrap; overflow: hidden; outline: none; }
 .tree .row.folder { gap: 2px; }
 .tree .row:hover { background: #2a2d2e; }
 .tree .row.active { background: #37373d; color: #fff; }
@@ -176,7 +177,7 @@ input.rename {
   -webkit-font-smoothing: antialiased;
 }
 
-.editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); overflow: clip; }
 .tabs { height: 35px; flex: none; display: flex; background: var(--chrome); border-bottom: 1px solid var(--border); }
 .tab-strip { flex: 1; min-width: 0; display: flex; overflow-x: auto; scrollbar-width: none; }
 .tab-strip::-webkit-scrollbar { display: none; }
@@ -201,6 +202,10 @@ input.rename {
 .tab-close { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; visibility: hidden; font-size: 14px; }
 .tab.active .tab-close, .tab:hover .tab-close { visibility: visible; }
 .tab-close:hover { background: #ffffff1f; }
+.tab-dot { display: none; width: 20px; height: 20px; place-items: center; font-size: 10px; color: var(--fg); }
+.tab.dirty .tab-label { color: var(--modified); }
+.tab.dirty:not(:hover) .tab-close { display: none; }
+.tab.dirty:not(:hover) .tab-dot { display: grid; }
 .quick.switcher #quick-input { display: none; }
 .quick.switcher #quick-list { margin-top: 0; }
 .binary { padding: 48px 24px; color: #9d9d9d; text-align: center; white-space: normal; }
@@ -221,14 +226,16 @@ input.rename {
   font: 13px/22px Menlo, Consolas, 'Courier New', monospace;
 }
 .suggest[hidden] { display: none; }
-.suggest .item { height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 4px; white-space: nowrap; cursor: pointer; }
+.suggest .item { overflow: hidden; height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 4px; white-space: nowrap; cursor: pointer; }
 .suggest .item.on { background: #04395e; color: #fff; outline: 1px solid #0078d4; outline-offset: -1px; }
 .suggest .item b { color: #2aaaff; font-weight: 400; }
 .suggest .item .detail { margin-left: auto; padding-left: 12px; overflow: hidden; text-overflow: ellipsis; color: #9d9d9d; font: 12px -apple-system, 'Segoe UI', sans-serif; }
 .tab-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; padding-right: 8px; }
-.breadcrumbs { height: 22px; flex: none; display: flex; align-items: center; gap: 2px; padding-left: 16px; color: #a9a9a9; }
+.breadcrumbs { height: 22px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 16px; overflow: hidden; white-space: nowrap; color: #a9a9a9; }
+.breadcrumbs > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 
-.stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+/* clip, not hidden: the offscreen Instagram webview is bigger than the editor, and a "hidden" box can still be scrolled by caret/focus/scrollIntoView, which slid the whole editor sideways. */
+.stage { position: relative; flex: 1; min-height: 0; overflow: clip; }
 .progress { display: none; position: absolute; inset: 0 0 auto; z-index: 4; height: 2px; overflow: hidden; }
 .busy .progress { display: block; }
 .progress::before {
@@ -254,26 +261,54 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
   position: absolute;
   inset: 0;
   z-index: 1;
-  overflow: auto;
+  overflow: hidden auto;
   background: var(--bg);
   font: 12px/18px Menlo, Monaco, 'Courier New', monospace;
   user-select: text;
   cursor: text;
   counter-reset: ln;
 }
-.line { min-height: 18px; padding-right: 24px; white-space: pre; counter-increment: ln; }
+.line { position: relative; min-height: 18px; padding: 0 24px 0 64px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; counter-increment: ln; }
 .line::before {
   content: counter(ln);
-  display: inline-block;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 38px;
-  margin-right: 26px;
   text-align: right;
   color: #6e7681;
   user-select: none;
 }
-.line.input { box-shadow: inset 0 0 0 1px #282828; }
+.line.input { display: flex; align-items: flex-start; box-shadow: inset 0 0 0 1px #282828; }
+.line.alarm-mark { background: #264f7833; }
+.line.alarm-mark .com { color: #3794ff; }
+.line.current { box-shadow: inset 0 0 0 1px #282828; }
+.hover-card { position: fixed; z-index: 14; max-width: 520px; padding: 4px 8px 6px; background: #202020; border: 1px solid #454545; border-radius: 3px; box-shadow: 0 0 8px #0000005c; font-size: 13px; pointer-events: none; }
+.hover-card[hidden] { display: none; }
+.hover-code { padding-bottom: 4px; border-bottom: 1px solid #454545; color: #dcdcaa; font: 12px/18px Menlo, Consolas, 'Courier New', monospace; white-space: pre-wrap; }
+.hover-body { padding-top: 4px; color: var(--fg); }
+.hover-foot { padding-top: 2px; color: #9d9d9d; font-size: 12px; }
+.suggest .item .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.line.input > span { flex: none; white-space: pre; }
+.line.input > .str { flex: 0 1 auto; min-width: 0; display: flex; align-items: flex-start; white-space: normal; }
+.line.input > .str > .q:last-child, .line.input > #draft-post { align-self: flex-end; }
 .line.input::before { color: var(--fg); }
-#draft { all: unset; field-sizing: content; min-width: 1px; caret-color: #aeafad; }
+#draft {
+  all: unset;
+  display: block;
+  flex: 0 1 auto;
+  field-sizing: content;
+  min-width: 1px;
+  max-width: 100%;
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  resize: none;
+  font: inherit;
+  caret-color: #aeafad;
+  user-select: text;
+}
 .line.input.empty .q { display: none; }
 .media:hover { anchor-name: --media; }
 .media img {
@@ -340,7 +375,11 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 #quick-list { max-height: 400px; margin-top: 5px; overflow-y: auto; }
 #quick-list .item { height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 3px; white-space: nowrap; }
 #quick-list .item.on { background: #04395e; color: #fff; }
-#quick-list .dir { overflow: hidden; text-overflow: ellipsis; color: #9d9d9d; font-size: 12px; }
+#quick-list .item .label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#quick-list .item .hl { color: #2aaaff; font-weight: 600; }
+#quick-list .item.on .hl { color: #9fd3ff; }
+#quick-list .dir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #9d9d9d; font-size: 12px; }
+#quick-list .letter { flex: none; margin-left: auto; padding-left: 8px; color: var(--modified); font-size: 12px; }
 
 .menu {
   position: fixed;
@@ -363,12 +402,12 @@ webview { position: absolute; top: 0; left: 0; width: 1400px; height: 2400px; }
 .menu .item.disabled:hover .key { color: #6b6b6b; }
 #lines.editing { outline: none; caret-color: #aeafad; }
 .toasts { position: fixed; right: 12px; bottom: 34px; z-index: 13; display: flex; flex-direction: column; gap: 8px; }
-.toast { width: 450px; padding: 10px 10px 8px; background: #202020; border: 1px solid #454545; border-radius: 4px; box-shadow: 0 0 8px #0000005c; color: var(--fg); }
+.toast { width: min(450px, calc(100vw - 24px)); padding: 10px 10px 8px; background: #202020; border: 1px solid #454545; border-radius: 4px; box-shadow: 0 0 8px #0000005c; color: var(--fg); }
 .toast-main { display: flex; gap: 8px; align-items: flex-start; line-height: 20px; }
 .toast-main .codicon { font-size: 16px; line-height: 20px; }
 .toast-main .codicon-close { margin-left: auto; padding: 0 2px; border-radius: 4px; cursor: pointer; }
 .toast-main .codicon-close:hover { background: #ffffff1a; }
-.toast-text { flex: 1; }
+.toast-text { flex: 1; min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .toast-foot { display: flex; align-items: center; margin-top: 8px; }
 .toast-source { color: #9d9d9d; font-size: 12px; }
 .toast-actions { margin-left: auto; display: flex; gap: 6px; }
@@ -445,7 +484,7 @@ button.primary.dim { opacity: 0.5; }
 .tree .row .letter { margin-left: auto; padding-left: 6px; font-size: 12px; }
 .tree .row .letter.m { color: var(--modified); }
 .tree .count-chip { margin-left: auto; padding: 0 6px; border-radius: 10px; background: #616161; color: #fff; font-size: 11px; }
-.tree .hit { padding-left: 46px; font-family: Menlo, Consolas, monospace; font-size: 12px; white-space: pre; }
+.tree .hit { display: block; padding-left: 46px; line-height: 22px; font-family: Menlo, Consolas, monospace; font-size: 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .tree .hit mark { background: #623315; color: inherit; outline: 1px solid #9e6a03; }
 .welcome { padding: 4px 20px 8px; color: var(--fg); }
 .welcome button.primary { width: 100%; box-sizing: border-box; margin: 8px 0 12px; }
@@ -563,14 +602,14 @@ button.primary.dim { opacity: 0.5; }
 <div class="menu" id="menu" role="menu" hidden></div>
 
 <div class="quick" id="quick" hidden>
-  <input id="quick-input" placeholder="Search files by name (append : to go to a line, @ to go to a symbol, > for commands, ? for help)" spellcheck="false" autocomplete="off">
+  <input id="quick-input" placeholder="Search files by name, chat name or initials (: line, @ people, > commands, ? help)" spellcheck="false" autocomplete="off">
   <div id="quick-list"></div>
 </div>
 
 <main>
   <nav class="activitybar">
     <div>
-      <button class="active current" data-view="explorer" title="Explorer (Ctrl+Shift+E)" aria-label="Explorer"><i class="codicon codicon-files"></i></button>
+      <button class="active current" data-view="explorer" title="Explorer (Ctrl+Shift+E)" aria-label="Explorer"><i class="codicon codicon-files"></i><span class="badge" id="explorer-badge" hidden></span></button>
       <button data-view="search" title="Search (Ctrl+Shift+F)" aria-label="Search"><i class="codicon codicon-search"></i></button>
       <button data-view="scm" title="Source Control (Ctrl+Shift+G)" aria-label="Source Control"><i class="codicon codicon-source-control"></i><span class="badge" id="scm-badge" hidden></span></button>
       <button data-view="debug" title="Run and Debug (Ctrl+Shift+D)" aria-label="Run and Debug"><i class="codicon codicon-debug-alt"></i></button>
@@ -578,7 +617,7 @@ button.primary.dim { opacity: 0.5; }
     </div>
     <div>
       <button id="accounts" title="Accounts" aria-label="Accounts"><i class="codicon codicon-account"></i></button>
-      <button id="manage" title="Manage" aria-label="Manage"><i class="codicon codicon-settings-gear"></i></button>
+      <button id="manage" title="Manage" aria-label="Manage"><i class="codicon codicon-settings-gear"></i><span class="badge" id="manage-badge" hidden>1</span></button>
     </div>
   </nav>
 
@@ -657,7 +696,7 @@ button.primary.dim { opacity: 0.5; }
       <webview src="https://www.instagram.com/direct/inbox/" partition="persist:instagram" webpreferences="backgroundThrottling=no"></webview>
       <div class="code">
         <div id="lines"></div>
-        <div class="line input send" hidden><span id="draft-pre"></span><span class="str"><span class="q">"</span><input id="draft" aria-label="Message" spellcheck="false" autocomplete="off"><span class="q">"</span></span><span id="draft-post"></span></div>
+        <div class="line input send" hidden><span id="draft-pre"></span><span class="str"><span class="q">"</span><textarea id="draft" rows="1" aria-label="Message" spellcheck="false" autocomplete="off"></textarea><span class="q">"</span></span><span id="draft-post"></span></div>
         <div id="after"></div>
       </div>
       <div class="page" id="page" hidden></div>
@@ -690,7 +729,7 @@ button.primary.dim { opacity: 0.5; }
     <button id="problems-status"><i class="codicon codicon-error"></i>0 <i class="codicon codicon-warning"></i>0</button>
   </div>
   <div>
-    <span>Ln 1, Col 1</span>
+    <button id="cursor-pos" title="Go to Line/Column">Ln 1, Col 1</button>
     <button id="spaces" title="Select Indentation">Spaces: 2</button>
     <span>UTF-8</span>
     <span>LF</span>
@@ -705,6 +744,7 @@ button.primary.dim { opacity: 0.5; }
 <script src="scrape.js"></script>
 <script src="camo.js"></script>
 <script src="roman.js"></script>
+<script src="match.js"></script>
 <script src="templates.js"></script>
 <script src="workspace.js"></script>
 <script src="renderer.js"></script>

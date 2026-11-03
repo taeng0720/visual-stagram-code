@@ -74,7 +74,7 @@ const views = (() => {
   function drawExtensions() {
     const q = $('ext-search').value.trim().toLowerCase()
     const mine = installed()
-    const hit = (x) => !q || x.name.toLowerCase().includes(q) || x.pub.toLowerCase().includes(q) || x.desc.toLowerCase().includes(q)
+    const hit = (x) => !q || !!match.score(q, [x.name, x.id, x.pub, x.desc])
     const item = (x, isInstalled) => {
       const row = el(
         'div',
@@ -98,6 +98,7 @@ const views = (() => {
   }
 
   let changesKey = ''
+  let pending = []
   let announced = null
   let badged = -1
   const badgeCanvas = Object.assign(document.createElement('canvas'), { width: 32, height: 32 })
@@ -107,9 +108,13 @@ const views = (() => {
     const g = badgeCanvas.getContext('2d')
     g.clearRect(0, 0, 32, 32)
     if (n) {
+      g.fillStyle = '#1f1f1f'
+      g.beginPath()
+      g.arc(16, 16, 16, 0, Math.PI * 2)
+      g.fill()
       g.fillStyle = '#0078d4'
       g.beginPath()
-      g.arc(16, 16, 15, 0, Math.PI * 2)
+      g.arc(16, 16, 14, 0, Math.PI * 2)
       g.fill()
       g.fillStyle = '#fff'
       g.font = `bold ${n > 9 ? 16 : 20}px Segoe UI, sans-serif`
@@ -119,18 +124,20 @@ const views = (() => {
     }
     window.native?.badge(n, badgeCanvas.toDataURL())
     $('bell').className = 'codicon codicon-' + (n ? 'bell-dot' : 'bell')
+    $('bell-button').title = n ? `Notifications: ${n} new` : 'Notifications: No New Notifications'
+    const explorer = $('explorer-badge')
+    explorer.hidden = !n
+    explorer.textContent = n > 99 ? '99+' : n
   }
 
   const toasts = el('div', 'toasts')
   document.body.append(toasts)
-  let lastToast = null
   function toast(message, actions = [], source = 'Git') {
-    lastToast = [message, actions, source]
     const close = icon('close')
     const box = el(
       'div',
       'toast',
-      el('div', 'toast-main', icon('info', '#3794ff'), el('span', 'toast-text', message), close),
+      el('div', 'toast-main', icon('info', '#3794ff'), Object.assign(el('span', 'toast-text', message), { title: message }), close),
       el('div', 'toast-foot', el('span', 'toast-source', `Source: ${source}`), el('span', 'toast-actions', ...actions.map(([label, run]) => {
         const b = el('button', 'toast-button', label)
         b.addEventListener('click', () => {
@@ -144,13 +151,41 @@ const views = (() => {
     toasts.replaceChildren(box)
     setTimeout(() => box.remove(), 10000)
   }
+  // Signatures we've already notified about, kept across restarts so a reopened app doesn't re-announce old messages.
+  const firstRun = localStorage.getItem('notified') === null
+  let notified = {}
+  try {
+    notified = JSON.parse(localStorage.getItem('notified') ?? '{}') ?? {}
+  } catch {}
+  let settleUntil = 0
+  const sigOf = (n) => workspace.signature(snap.previews?.[snap.threads.indexOf(n)])
   function announce(names) {
-    if (announced === null) {
-      announced = new Set(names)
-      return
+    // Let the inbox list finish loading before deciding what is new, so one restart = at most one toast.
+    if (!settleUntil) {
+      settleUntil = Date.now() + 2500
+      setTimeout(drawChanges, 2600)
     }
-    const added = names.filter((n) => !announced.has(n) && n !== showing.thread)
-    announced = new Set(names)
+    if (Date.now() < settleUntil) return
+    let dirty = false
+    for (const n of snap.threads) {
+      if (!names.includes(n) && n in notified) {
+        delete notified[n]
+        dirty = true
+      }
+    }
+    const added = []
+    for (const n of names) {
+      const sig = sigOf(n)
+      if (notified[n] === sig) continue
+      notified[n] = sig
+      dirty = true
+      if (n !== showing.thread) added.push(n)
+    }
+    if (dirty) localStorage.setItem('notified', JSON.stringify(notified))
+    if (announced === null) {
+      announced = true
+      if (firstRun) return
+    }
     if (!added.length) return
     const p = ws.threads[added[0]]
     toast(added.length === 1 ? `Incoming changes in ${workspace.base(p)}. Pull to update your working tree.` : `${added.length} files have incoming changes.`, [
@@ -160,10 +195,13 @@ const views = (() => {
   }
 
   function drawChanges() {
-    const fresh = workspace.unread(ws, snap.threads, snap.previews)
+    const fresh = freshThreads()
     const names = recent().filter((n) => fresh.has(n) && ws.threads[n])
-    sendBadge(names.length)
-    if (snap.ok) announce(names)
+    pending = names
+    if (snap.ok && snap.threads.length) {
+      sendBadge(names.length)
+      announce(names)
+    }
     const key = JSON.stringify(names.map((n) => ws.threads[n]))
     if (key === changesKey) return
     if (pressing && $('changes').matches(':hover')) return setTimeout(drawChanges, 150)
@@ -186,7 +224,7 @@ const views = (() => {
   }
 
   function commit() {
-    const fresh = workspace.unread(ws, snap.threads, snap.previews)
+    const fresh = freshThreads()
     if (!fresh.size) return
     snap.threads.forEach((n, i) => fresh.has(n) && (ws.seen[n] = workspace.signature(snap.previews?.[i])))
     $('commit-message').value = ''
@@ -211,6 +249,12 @@ const views = (() => {
       return [(start ? '…' : '') + text.slice(start, at).trimStart(), el('mark', '', text.slice(at, at + q.length)), text.slice(at + q.length, at + q.length + 60)]
     }
     const groups = []
+    if (ws.alarm) {
+      const hits = (alarms?.stories ?? []).filter((a) => a.text.toLowerCase().includes(q) || a.who?.toLowerCase().includes(q)).map((a) => ({ text: a.text }))
+      if (hits.length || match.score(q, [workspace.base(ws.alarm), '알람', '알림', 'notifications', 'alarm'])) groups.push({ path: ws.alarm, hits, open: openAlarm })
+    }
+    const lastLines = new Map(catalog.map((t) => [t.name, t.preview]))
+    snap.threads.forEach((n, i) => lastLines.set(n, snap.previews?.[i] ?? []))
     for (const name of recent()) {
       const p = ws.threads[name]
       if (!p) continue
@@ -221,15 +265,19 @@ const views = (() => {
           const text = camo.text(l)
           if (l.kind !== 'code' && text.toLowerCase().includes(q)) hits.push({ text })
         })
+      } else {
+        // Chats that aren't open: search their last message (what Instagram shows in the inbox).
+        const preview = (lastLines.get(name) ?? []).join(' ')
+        if (preview.toLowerCase().includes(q)) hits.push({ text: preview })
       }
-      if (hits.length || p.toLowerCase().includes(q) || name.toLowerCase().includes(q) || roman.words(name).join('').includes(q.replace(/[\s_]/g, ''))) groups.push({ path: p, hits, open: () => openThread(name) })
+      if (hits.length || match.score(q, [workspace.base(p), name, ws.ids?.[name], p])) groups.push({ path: p, hits, open: () => openThread(name) })
     }
     for (const f of ws.files) {
       if (f === ws.readme) continue
       const hits = (workspace.content(ws, f) ?? [])
         .map((text, line) => ({ text, line }))
         .filter((h) => h.text.toLowerCase().includes(q))
-      if (hits.length || f.toLowerCase().includes(q)) groups.push({ path: f, hits, open: (line) => jump(f, line) })
+      if (hits.length || match.score(q, [workspace.base(f), f])) groups.push({ path: f, hits, open: (line) => jump(f, line) })
     }
     const total = groups.reduce((n, g) => n + Math.max(g.hits.length, 1), 0)
     $('search-summary').textContent = groups.length ? `${total} result${total > 1 ? 's' : ''} in ${groups.length} file${groups.length > 1 ? 's' : ''}` : 'No results found. Review your settings for configured exclusions and check your gitignore files.'
@@ -275,9 +323,7 @@ const views = (() => {
     if (!force && key === outlineKey) return
     outlineKey = key
     if (people === null) return $('outline-list').replaceChildren(el('div', 'row', icon('loading codicon-modifier-spin'), el('span', 'label', 'Loading symbols...')))
-    const squash = q.replace(/[\s_]/g, '')
-    const hit = (p) => !q || p.username.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || roman.words(p.name).join('').includes(squash)
-    const found = people.filter(hit).sort((a, b) => (b.following && b.followers) - (a.following && a.followers))
+    const found = match.filter(q, people, (p) => [p.username, p.name], (a, b) => (b.following && b.followers) - (a.following && a.followers)).map((x) => x.item)
     if (!found.length) return $('outline-list').replaceChildren(el('div', 'row', el('span', 'dir', people.length ? 'No symbols match.' : 'No symbols found.')))
     $('outline-list').replaceChildren(
       ...found.slice(0, 300).map((p) => {
@@ -479,7 +525,7 @@ const views = (() => {
       case 'git': {
         const sub = args[0]
         if (sub === 'status') {
-          const fresh = workspace.unread(ws, snap.threads, snap.previews)
+          const fresh = freshThreads()
           const changed = recent().filter((n) => fresh.has(n) && ws.threads[n])
           log('terminal', 'On branch main')
           log('terminal', "Your branch is up to date with 'origin/main'.")
@@ -700,12 +746,27 @@ const views = (() => {
     ['Debug: Start Debugging', runDebug, 'F5'],
     ['Git: Commit', commit],
     ['Developer: Toggle Preview', togglePreview],
+    ['Help: Check for Updates...', () => checkUpdates()],
+    ['Instagram: Show Notifications', openAlarm],
+    ['Instagram: Refresh Chat List', () => crawl(true)],
     ...templates.LIST.map((t) => [`Project: Open Template (${t.label})`, () => useTemplate(t.id)]),
   ]
+  const ALIASES = {
+    'Developer: Toggle Preview': 'instagram insta real page 인스타 원래화면 preview',
+    'Instagram: Show Notifications': 'alarm activity likes follows 알람 알림 좋아요 팔로우',
+    'Instagram: Refresh Chat List': 'all chats inbox index reload 채팅방 전체 새로고침',
+    'Go to Symbol in Workspace...': 'dm people follower following 사람 디엠 메시지',
+    'View: Show Outline': 'dm people follower following 팔로워 팔로잉',
+    'Git: Commit': 'read mark seen 읽음',
+    'View: Show Source Control': 'new unread messages 새메시지 알림',
+    'Preferences: Open Settings (UI)': 'vsc settings 설정 options',
+    'Preferences: Open Keyboard Shortcuts': 'keys 단축키',
+  }
   function commands(q) {
-    return COMMANDS()
-      .filter(([label]) => !q || label.toLowerCase().includes(q))
-      .map(([label, run, key]) => ({ icon: icon('blank'), label, desc: key ?? '', run }))
+    const list = COMMANDS().map(([label, run, key]) => ({ label, run, key }))
+    return match
+      .filter(q, list, (c) => [c.label, c.label.replace(/^[^:]+:\s*/, ''), ALIASES[c.label], c.key])
+      .map(({ item, hits }) => ({ icon: icon('blank'), label: item.label, hits, desc: item.key ?? '', run: item.run }))
   }
 
   const MENUS = {
@@ -781,12 +842,44 @@ const views = (() => {
     ['Extensions', () => showView('extensions'), 'Ctrl+Shift+X'],
     ['Keyboard Shortcuts', () => openPage('shortcuts'), 'Ctrl+K Ctrl+S'],
     null,
-    ['Check for Updates...', () => log('output', '[info] Visual Studio Code is up to date.')],
+    update.ready ? ['Restart to Update (1)', () => window.native?.installUpdate()] : ['Check for Updates...', checkUpdates],
   ])
+
+  // ---- Updates (GitHub Releases via electron-updater in the main process)
+  const update = { ready: false, version: null }
+  function checkUpdates() {
+    if (!window.native?.checkUpdate) return toast('Updates are only available in the installed app.', [], 'Visual Studio Code')
+    log('output', '[info] Checking for updates...')
+    window.native.checkUpdate()
+  }
+  window.native?.onUpdate?.((state, info) => {
+    if (state === 'downloading') log('output', `[info] Downloading update ${info.version ?? ''}...`)
+    if (state === 'progress' && info.percent % 25 === 0) log('output', `[info] Downloading update: ${info.percent}%`)
+    if (state === 'ready') {
+      update.ready = true
+      update.version = info.version
+      log('output', `[info] Update ${info.version ?? ''} is ready.`)
+      $('manage-badge').hidden = false
+      toast(`Restart Visual Studio Code to apply the latest update${info.version ? ` (${info.version})` : ''}.`, [
+        ['Update Now', () => window.native.installUpdate()],
+        ['Release Notes', () => window.native.openReleaseNotes?.()],
+        ['Later', () => {}],
+      ], 'Visual Studio Code')
+    }
+    if (state === 'latest') toast('There are currently no updates available.', [], 'Visual Studio Code')
+    if (state === 'error') toast('Unable to check for updates. Check your internet connection and try again.', [], 'Visual Studio Code')
+  })
 
   $('bell-button').addEventListener('click', () => {
     if (toasts.children.length) return toasts.replaceChildren()
-    if (badged > 0 && lastToast) return toast(...lastToast)
+    if (pending.length) {
+      const first = pending[0]
+      const names = pending.slice(0, 3).map((n) => workspace.base(ws.threads[n])).join(', ') + (pending.length > 3 ? ', …' : '')
+      return toast(pending.length === 1 ? 'Incoming changes in ' + names + '.' : pending.length + ' files have incoming changes: ' + names, [
+        ['Show Changes', () => showView('scm')],
+        ['Open File', () => openThread(first)],
+      ])
+    }
     toast('No new notifications', [], 'Notifications')
   })
 
@@ -866,6 +959,22 @@ const views = (() => {
     if (k) openKey(k)
   }
   addEventListener('keyup', (e) => switcher && (e.key === 'Control' || e.key === 'Meta') && finishSwitcher())
+  // While the Ctrl+Tab list is open: arrows move the highlight, Enter opens it right away, Esc cancels.
+  // Capture phase so the keys never reach the message box (Enter would send) or move the text caret.
+  addEventListener(
+    'keydown',
+    (e) => {
+      if (!switcher) return
+      const moves = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }
+      if (e.key in moves) openSwitcher(moves[e.key])
+      else if (e.key === 'Enter') finishSwitcher()
+      else if (e.key === 'Escape') closeSwitcher()
+      else return
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    true,
+  )
   addEventListener('blur', () => switcher && closeSwitcher())
 
   function gotoLine(q) {
@@ -900,73 +1009,160 @@ const views = (() => {
     const members = [...new Set([...(ws.members?.[showing.thread] ?? []), ...snap.rows.map((r) => r.who).filter(Boolean)])]
     const known = new Map((people ?? []).map((p) => [p.username, p]))
     const pool = [...members.map((u) => ({ username: u, name: known.get(u)?.name ?? '', member: true })), ...(people ?? []).filter((p) => !members.includes(p.username))]
-    const squash = q.replace(/[\s_.]/g, '')
-    const starts = (p) => p.username.toLowerCase().startsWith(q) || p.name.toLowerCase().startsWith(q)
-    return pool
-      .filter((p) => !q || p.username.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || roman.words(p.name).join('').includes(squash))
-      .sort((a, b) => (b.member ? 1 : 0) - (a.member ? 1 : 0) || (starts(b) ? 1 : 0) - (starts(a) ? 1 : 0) || (b.following && b.followers ? 1 : 0) - (a.following && a.followers ? 1 : 0))
+    const rank = (p) => (p.member ? 0 : 2) + (p.following && p.followers ? 0 : 1)
+    return match
+      .filter(q, pool, (p) => [p.username, p.name], (a, b) => rank(a) - rank(b))
+      .map((x) => x.item)
       .slice(0, 12)
   }
+
+  // ---- IntelliSense for messages: words from this chat and from what you've sent, whole past messages as snippets.
+  let sent = []
+  try {
+    sent = JSON.parse(localStorage.getItem('sentHistory') ?? '[]').filter((t) => typeof t === 'string')
+  } catch {}
+  function remember(text) {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    sent = [t, ...sent.filter((x) => x !== t)].slice(0, 300)
+    localStorage.setItem('sentHistory', JSON.stringify(sent))
+  }
+  const WORD = /[\p{L}\p{N}_']+/gu
+  function vocabulary() {
+    const counts = new Map()
+    const add = (text, weight) => {
+      for (const w of String(text ?? '').match(WORD) ?? []) if (w.length > 1) counts.set(w, (counts.get(w) ?? 0) + weight)
+    }
+    for (const r of snap.rows) add(r.text, 2)
+    sent.slice(0, 150).forEach((t) => add(t, 3))
+    for (const t of catalog.slice(0, 60)) add((t.preview ?? []).join(' '), 1)
+    return counts
+  }
+  function wordAt(manual) {
+    const caret = draft.selectionStart ?? draft.value.length
+    if (draft.selectionEnd !== caret) return null
+    const before = draft.value.slice(0, caret)
+    if (/^[\p{L}\p{N}_]/u.test(draft.value.slice(caret))) return null
+    const m = before.match(/[\p{L}\p{N}_']+$/u)
+    if (!m && !manual) return null
+    const prefix = m?.[0] ?? ''
+    return { start: caret - prefix.length, caret, query: prefix }
+  }
+  function completions(at, manual) {
+    const q = at.query.toLowerCase()
+    const jamo = /^[ㄱ-ㅎ]+$/.test(q)
+    const items = []
+    const whole = draft.value.trim()
+    if (whole.length >= 2 && at.caret === draft.value.length) {
+      for (const t of sent) {
+        if (items.length >= 2) break
+        if (t.length > whole.length && t.toLowerCase().startsWith(whole.toLowerCase())) {
+          items.push({ kind: 'snippet', label: t, detail: 'sent before', start: draft.value.length - draft.value.trimStart().length, insert: t + ' ', hit: whole.length })
+        }
+      }
+    }
+    if (!q && !manual) return items
+    const words = [...vocabulary()]
+      .filter(([w]) => w.toLowerCase() !== q && (jamo ? match.choseong(w).startsWith(q) : w.toLowerCase().startsWith(q)))
+      .sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)
+      .slice(0, 8 - items.length)
+    for (const [w, n] of words) items.push({ kind: 'word', label: w, detail: n > 2 ? 'used ' + Math.round(n) + '×' : 'word', start: at.start, insert: w, hit: jamo ? 0 : q.length })
+    return items
+  }
+
   function closeSuggest() {
     sug = null
     suggest.hidden = true
   }
-  function drawSuggest() {
-    const at = mentionAt()
-    if (!at || !showing.thread || document.activeElement !== draft) return closeSuggest()
-    if (people === null) loadPeople()
-    const items = candidates(at.query)
-    if (!items.length && people !== null) return closeSuggest()
-    sug = { ...at, items, index: Math.min(sug?.index ?? 0, Math.max(items.length - 1, 0)) }
-    const mark = (text) => {
-      const i = at.query ? text.toLowerCase().indexOf(at.query) : -1
-      return i < 0 ? [text] : [text.slice(0, i), el('b', '', text.slice(i, i + at.query.length)), text.slice(i + at.query.length)]
-    }
-    suggest.replaceChildren(
-      ...(items.length
-        ? items.map((p, i) => {
-            const row = el('div', 'item' + (i === sug.index ? ' on' : ''), icon(p.member ? 'symbol-field' : 'symbol-variable', p.member ? '#ee9d28' : '#75beff'), el('span', '', ...mark(p.username)), el('span', 'detail', p.name))
-            row.addEventListener('mousedown', (e) => {
-              e.preventDefault()
-              acceptSuggest(i)
-            })
-            return row
-          })
-        : [el('div', 'item', icon('loading codicon-modifier-spin'), el('span', '', 'Loading...'))]),
-    )
+  function placeSuggest(start) {
     measure.font = getComputedStyle(draft).font
     const box = draft.getBoundingClientRect()
-    const left = Math.min(box.left + measure.measureText(draft.value.slice(0, at.start)).width, innerWidth - 430)
+    const left = Math.min(box.left + Math.min(measure.measureText(draft.value.slice(0, start)).width, box.width), innerWidth - 430)
     suggest.hidden = false
     const below = box.bottom + 2 + suggest.offsetHeight < innerHeight - 24
     suggest.style.left = Math.max(4, left) + 'px'
     suggest.style.top = (below ? box.bottom + 2 : box.top - suggest.offsetHeight - 2) + 'px'
     suggest.children[sug.index]?.scrollIntoView({ block: 'nearest' })
   }
+  const ICONS = {
+    member: ['symbol-field', '#ee9d28'],
+    person: ['symbol-variable', '#75beff'],
+    word: ['symbol-text', '#cccccc'],
+    snippet: ['symbol-snippet', '#cccccc'],
+  }
+  function drawSuggest(manual = sug?.manual ?? false) {
+    if (!showing.thread || document.activeElement !== draft) return closeSuggest()
+    const mention = mentionAt()
+    let items
+    let at
+    if (mention) {
+      if (people === null) loadPeople()
+      at = mention
+      items = candidates(mention.query).map((p) => ({ kind: p.member ? 'member' : 'person', label: p.username, detail: p.name, start: mention.start, insert: '@' + p.username + ' ', hit: -1, q: mention.query }))
+      if (!items.length && people === null) items = [{ kind: 'loading', label: 'Loading...', detail: '' }]
+    } else {
+      at = wordAt(manual)
+      if (!at) return closeSuggest()
+      items = completions(at, manual)
+    }
+    if (!items.length) return closeSuggest()
+    const keep = sug && sug.mode === (mention ? 'mention' : 'word')
+    sug = { ...at, mode: mention ? 'mention' : 'word', manual, items, moved: keep ? sug.moved : false, index: keep ? Math.min(sug.index, items.length - 1) : 0 }
+    const mark = (item) => {
+      if (item.hit > 0) return [el('b', '', item.label.slice(0, item.hit)), item.label.slice(item.hit)]
+      const i = item.q ? item.label.toLowerCase().indexOf(item.q) : -1
+      return i < 0 ? [item.label] : [item.label.slice(0, i), el('b', '', item.label.slice(i, i + item.q.length)), item.label.slice(i + item.q.length)]
+    }
+    suggest.replaceChildren(
+      ...items.map((item, i) => {
+        const [name, color] = ICONS[item.kind] ?? ['loading codicon-modifier-spin', '']
+        const row = el('div', 'item' + (i === sug.index ? ' on' : ''), icon(name, color), el('span', 'label', ...mark(item)), el('span', 'detail', item.detail))
+        row.title = item.label
+        row.addEventListener('mousedown', (e) => {
+          e.preventDefault()
+          acceptSuggest(i)
+        })
+        return row
+      }),
+    )
+    placeSuggest(at.start)
+  }
   function acceptSuggest(i = sug?.index) {
-    const p = sug?.items[i]
-    if (!p) return closeSuggest()
-    const { start, caret } = sug
-    const insert = '@' + p.username + ' '
-    draft.value = draft.value.slice(0, start) + insert + draft.value.slice(caret)
-    draft.setSelectionRange(start + insert.length, start + insert.length)
+    const item = sug?.items[i]
+    if (!item?.insert) return closeSuggest()
+    const { caret } = sug
+    const end = item.kind === 'snippet' ? draft.value.length : caret
+    draft.value = draft.value.slice(0, item.start) + item.insert + draft.value.slice(end)
+    const at = item.start + item.insert.length
+    draft.setSelectionRange(at, at)
     closeSuggest()
     draft.dispatchEvent(new Event('input'))
   }
-  draft.addEventListener('input', () => setTimeout(drawSuggest))
-  draft.addEventListener('click', drawSuggest)
+  draft.addEventListener('input', () => setTimeout(() => drawSuggest(false)))
+  draft.addEventListener('click', () => drawSuggest(false))
   draft.addEventListener('blur', () => setTimeout(closeSuggest, 100))
   document.addEventListener(
     'keydown',
     (e) => {
-      if (!sug || e.target !== draft || e.isComposing) return
+      if (e.target !== draft || e.isComposing) return
+      if (e.ctrlKey && e.code === 'Space') {
+        e.preventDefault()
+        return drawSuggest(true)
+      }
+      if (!sug) return
+      const step = (n) => {
+        sug.moved = true
+        sug.index = (sug.index + n + sug.items.length) % Math.max(sug.items.length, 1)
+      }
       const keys = {
-        ArrowDown: () => (sug.index = (sug.index + 1) % Math.max(sug.items.length, 1)),
-        ArrowUp: () => (sug.index = (sug.index - 1 + sug.items.length) % Math.max(sug.items.length, 1)),
-        Enter: () => acceptSuggest(),
+        ArrowDown: () => step(1),
+        ArrowUp: () => step(-1),
         Tab: () => acceptSuggest(),
         Escape: () => closeSuggest(),
       }
+      // Enter normally sends; it only accepts once you've picked an item with the arrows (or for @mentions).
+      if (e.key === 'Enter' && (sug.mode === 'mention' || sug.moved)) keys.Enter = () => acceptSuggest()
+      if (e.key === 'Enter' && !keys.Enter) return closeSuggest()
       if (!keys[e.key]) return
       e.preventDefault()
       e.stopPropagation()
@@ -1056,5 +1252,7 @@ const views = (() => {
     commands,
     help,
     show: showView,
+    remember,
+    notify: toast,
   }
 })()

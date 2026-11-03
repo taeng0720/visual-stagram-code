@@ -1,6 +1,6 @@
 {
   "name": "vstagram",
-  "displayName": "Visual Stagram Code",
+  "displayName": "Visual Stagram Code - Instagram DM",
   "description": "인스타그램 DM을 파이썬 코드처럼 보여줍니다. Visual Stagram Code 데스크톱 앱이 필요합니다.",
   "version": "0.1.2",
   "publisher": "hongs-lab",
@@ -17,9 +17,21 @@
     "Other"
   ],
   "keywords": [
+    "vsc",
+    "vscode",
+    "visual stagram",
+    "vstagram",
+    "insta",
     "instagram",
+    "instagram dm",
     "dm",
-    "인스타그램"
+    "direct message",
+    "chat",
+    "messenger",
+    "인스타",
+    "인스타그램",
+    "디엠",
+    "메시지"
   ],
   "extensionKind": [
     "ui"

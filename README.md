@@ -13,7 +13,8 @@ VS Code처럼 보이는 인스타그램 DM 앱. 대화가 파이썬, C#, C++ 같
 왼쪽 EXPLORER는 진짜 개발 프로젝트처럼 보입니다. 대화방은 인스타 이름을 영어로 바꾼 파일 이름으로 섞여 있고 (`김민수` → `kim_minsu.py`, `배고파` → `hungry.py`, C#이면 `KimMinsu.cs`),
 나머지 파일은 열어도 그냥 코드만 보이는 가짜 파일입니다. 이 설명서는 `README.md`를 누르면 다시 볼 수 있습니다.
 
-- `Ctrl+P` (맥은 `Cmd+P`) : 빠른 열기. 파일 이름뿐 아니라 상대의 인스타 이름으로도 찾을 수 있습니다
+- `Ctrl+P` (맥은 `Cmd+P`) : 빠른 열기. 파일 이름뿐 아니라 상대의 인스타 이름·아이디로도 찾을 수 있습니다.
+  앞글자(`kim`), 단어 머리글자(`km` → `kim_minsu.py`), 초성(`ㄱㅁㅅ` → 김민수), 영어 발음(`minsu`), 띄어 쓴 여러 단어 모두 됩니다. 명령 팔레트·사람 찾기·OUTLINE·확장 검색도 같은 방식입니다
 - 새 메시지가 온 대화 파일은 git 수정 표시처럼 노란 이름과 `M` 이 붙습니다 (접힌 폴더에는 `●`)
 - `Esc` : 대화를 보다가 누르면 바로 가짜 코드 파일로 바뀝니다
 - `Ctrl+B` : 사이드바 접기/펴기
@@ -50,8 +51,9 @@ VS Code처럼 보이는 인스타그램 DM 앱. 대화가 파이썬, C#, C++ 같
 
 ### 알림
 
-- 새 메시지가 오면 작업표시줄 아이콘에 숫자 배지가 붙고, 창이 뒤에 있으면 아이콘이 깜빡입니다
-- 앱 안에서는 오른쪽 아래에 "Incoming changes in 파일이름" 알림이 뜹니다. 상태 줄 종을 누르면 다시 볼 수 있습니다
+- 새 메시지가 오면 작업표시줄 아이콘에 숫자 배지가 붙고, 창이 뒤에 있으면 아이콘이 깜빡입니다. 탐색기·소스 제어 아이콘 배지, 탭의 `●`, 파일의 `M` 도 함께 바뀝니다
+- 앱 안에서는 오른쪽 아래에 "Incoming changes in 파일이름" 알림이 뜹니다. 상태 줄 종을 누르면 지금 새로 온 대화를 다시 볼 수 있습니다
+- 읽음 여부는 인스타그램의 읽음 표시를 따릅니다. 폰에서 이미 읽은 대화나, 앱을 껐다 켜기 전에 이미 알림을 받은 메시지는 다시 알리지 않습니다
 
 ### 새 DM 열기
 
@@ -131,12 +133,12 @@ Python(FastAPI, Django), Node.js, Spring Boot, Go, ASP.NET Core, React, Next.js,
 
 - macOS : `Visual-Stagram-Code-mac-arm64.dmg` 를 열어 Applications로 끌어다 놓습니다 (Apple Silicon 맥).
   처음 열 때 막히면 시스템 설정 > 개인정보 보호 및 보안 > "그래도 열기"
-- Windows : `Visual-Stagram-Code-Setup.exe` 를 실행합니다.
+- Windows : `Visual-Stagram-Code-Setup.exe` 를 실행합니다. 시작 메뉴 검색에서 `vsc`, `inst`, `insta` 로도 찾을 수 있습니다 (`VSC Instagram DM` 바로가기).
   "Windows의 PC 보호" 창이 뜨면 추가 정보 > 실행
 
 ## 개발
 
 - `npm install` 후 `npm start` : 실행
-- `npm test` : 자체 점검 (`allow.js`, `langs.js`, `camo.js`, `templates.js`, `workspace.js`) (`allow.js`, `camo.js`, `workspace.js`)
-- `npm run dist` : 설치 파일 만들기 (`dist/` 에 macOS `.dmg`, Windows `.exe`)
+- `npm test` : 자체 점검 (`allow.js`, `langs.js`, `roman.js`, `match.js`, `camo.js`, `templates.js`, `workspace.js`)
+- `npm run dist` : 설치 파일 만들기 (`dist/` 에 macOS `.dmg`, Windows `.exe`). Windows 에서는 `npm run dist:win`
 - `cd vscode-extension && npm run package` : VS Code 확장 만들기 (`dist/visual-stagram-code.vsix`)
